@@ -25,6 +25,7 @@ export class AttributionEngine {
       : (process.env.PAYMENT_GRACE_PERIOD_MS !== undefined
         ? Number(process.env.PAYMENT_GRACE_PERIOD_MS)
         : (isTestExecution ? 0 : 5000));
+    this.verificationPolicy = options.verificationPolicy || process.env.YOUPI_VERIFICATION_POLICY || 'STANDARD';
     /** @type {Map<string, NodeJS.Timeout>} */
     this.pendingGraceTimers = new Map();
   }
@@ -201,43 +202,36 @@ export class AttributionEngine {
     if (normalizedObs.rawPayload?.targetSessionId) {
       currentSession = this.sessionRepo.findById(normalizedObs.rawPayload.targetSessionId);
     }
-    if (!currentSession || (currentSession.amountPaise !== normalizedObs.amountPaise)) {
-      currentSession = this.sessionRepo.findCurrentActiveOrProcessing(normalizedObs.receivingAccountId);
-    }
-    if (currentSession && currentSession.amountPaise !== normalizedObs.amountPaise) {
-      const matchRow = this.sessionRepo.db.queryOne(`
-        SELECT * FROM payment_sessions
-        WHERE receiving_account_id = ? AND status IN ('ACTIVE', 'PROCESSING') AND amount_paise = ?
-        ORDER BY created_at DESC
-        LIMIT 1
-      `, [normalizedObs.receivingAccountId, Number(normalizedObs.amountPaise)]);
-      if (matchRow) {
-        currentSession = this.sessionRepo.mapRow(matchRow);
+    if (!currentSession || (BigInt(currentSession.amountPaise) !== BigInt(normalizedObs.amountPaise))) {
+      if (normalizedObs.receivingAccountId) {
+        currentSession = this.sessionRepo.findCurrentActiveOrProcessing(normalizedObs.receivingAccountId);
       }
     }
-    if (!currentSession) {
-      // Fallback: match the amount, but only inside the receiving account the observer
-      // reported. Matching "any ACTIVE session on the gateway with this amount" could settle a
-      // different merchant's live payment (cross-merchant hijack), so it is intentionally gone.
-      const scopedRow = this.sessionRepo.db.queryOne(`
-        SELECT * FROM payment_sessions
-        WHERE receiving_account_id = ?
-          AND status IN ('ACTIVE', 'PROCESSING')
-          AND amount_paise = ?
-        ORDER BY created_at DESC
-        LIMIT 1
-      `, [normalizedObs.receivingAccountId, Number(normalizedObs.amountPaise)]);
-      if (scopedRow) {
-        currentSession = this.sessionRepo.mapRow(scopedRow);
+    if (currentSession && BigInt(currentSession.amountPaise) !== BigInt(normalizedObs.amountPaise)) {
+      if (normalizedObs.receivingAccountId) {
+        const matchRow = this.sessionRepo.db.queryOne(`
+          SELECT * FROM payment_sessions
+          WHERE receiving_account_id = ? AND status IN ('ACTIVE', 'PROCESSING') AND amount_paise = ?
+          ORDER BY created_at DESC
+          LIMIT 1
+        `, [normalizedObs.receivingAccountId, Number(normalizedObs.amountPaise)]);
+        if (matchRow) {
+          currentSession = this.sessionRepo.mapRow(matchRow);
+        } else {
+          currentSession = null;
+        }
+      } else {
+        currentSession = null;
       }
     }
+    // Fail-Closed Invariant: Never attribute across accounts or merchants by amount alone.
 
     if (currentSession) {
       // Invariant Check 1: Must be in ACTIVE or PROCESSING status
       const isEligibleStatus = [PaymentStatus.ACTIVE, PaymentStatus.PROCESSING].includes(currentSession.status);
 
       // Invariant Check 2: Exact Amount Match (in integer paise)
-      const isAmountMatch = currentSession.amountPaise === normalizedObs.amountPaise;
+      const isAmountMatch = BigInt(currentSession.amountPaise) === BigInt(normalizedObs.amountPaise);
 
       // Invariant Check 3: Temporal Window (with 5-minute clock skew tolerance, strictly preventing hijacking of prior expired sessions)
       let isPriorExpiredSession = false;
@@ -247,7 +241,7 @@ export class AttributionEngine {
           normalizedObs.receivingAccountId,
           thirtyMinutesAgo
         );
-        isPriorExpiredSession = recentExpired.some(s => s.amountPaise === normalizedObs.amountPaise);
+        isPriorExpiredSession = recentExpired.some(s => BigInt(s.amountPaise) === BigInt(normalizedObs.amountPaise));
       }
 
       const slotStart = currentSession.slotAcquiredAt
@@ -427,6 +421,24 @@ export class AttributionEngine {
           sources: verifyResult.sources
         });
 
+        // Under strict dual-channel verification policy, an alert alone does not auto-finalize to SUCCESS.
+        // It records Level 1 verification and awaits secondary source or manual admin reconciliation.
+        if (this.verificationPolicy === 'REQUIRE_DUAL_CHANNEL') {
+          return {
+            attributed: true,
+            duplicate: false,
+            lateMatch: false,
+            wasActive,
+            paymentSessionId: currentSession.id,
+            observationId: savedObs.id,
+            outcomeStatus: PaymentStatus.PROCESSING,
+            pendingVerification: true,
+            verificationLevel: verifyResult.level,
+            verificationTag: verifyResult.tag,
+            verificationSources: verifyResult.sources
+          };
+        }
+
         // If grace period is 0 (e.g. in instant tests), finalize immediately
         if (this.gracePeriodMs <= 0) {
           const finalResult = this.sessionRepo.recordVerificationSource(
@@ -470,6 +482,10 @@ export class AttributionEngine {
 
         const graceTimer = setTimeout(() => {
           this.pendingGraceTimers.delete(targetSessionId);
+          if (this.verificationPolicy === 'REQUIRE_DUAL_CHANNEL') {
+            return;
+          }
+
           // Check if session became terminal during the grace window
           const latestSession = this.sessionRepo.findById(targetSessionId);
           if (!latestSession || (isTerminalStatus(latestSession.status) && latestSession.status !== PaymentStatus.SUCCESS)) {
@@ -656,7 +672,7 @@ export class AttributionEngine {
       thirtyMinutesAgo
     );
 
-    const lateMatchedSession = recentExpired.find(s => s.amountPaise === normalizedObs.amountPaise);
+    const lateMatchedSession = recentExpired.find(s => BigInt(s.amountPaise) === BigInt(normalizedObs.amountPaise));
 
     if (lateMatchedSession) {
       // Mark observation as LATE_UNMATCHED

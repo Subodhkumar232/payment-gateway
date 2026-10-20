@@ -120,10 +120,10 @@ export class PaymentVerificationPipeline {
   process(input) {
     const isTest = Boolean(input.isTest);
     const testModeActive = Boolean(input.testModeActive);
-    // Bank credit notifications are a few hundred bytes. Capping the text bounds the cost of
+    // Bank credit notifications are usually under 64 KB. Capping the text bounds the cost of
     // the reference-extraction regexes below, which are scanned from every start offset and
     // would otherwise let one oversized "observation" block the event loop (ReDoS / DoS).
-    const MAX_SCAN_CHARS = 8192;
+    const MAX_SCAN_CHARS = 65536;
     const rawText = (input.rawText || '').toString().slice(0, MAX_SCAN_CHARS);
 
     // =========================================================================
@@ -236,41 +236,19 @@ export class PaymentVerificationPipeline {
 
     // 0. Resolve Payment Session and Customer Context early for security attribution
     let session = null;
-
-    // The VPA the credit actually landed on. Every fallback below is scoped by it so an
-    // observation can never be attributed to another merchant's in-flight session.
-    const observedVpa = ((rawText.match(/[a-zA-Z0-9._-]{2,64}@[a-zA-Z0-9._-]{2,32}/) || [])[0] || '').toLowerCase() || null;
-
     if (input.paymentSessionId) {
       session = this.sessionRepo.findById(input.paymentSessionId);
     } else if (input.receivingAccountId) {
       session = this.sessionRepo.findCurrentActiveOrProcessing(input.receivingAccountId);
     }
 
-    if (!session) {
-      // 1. Try finding active or processing session for this specific receiving account
-      if (input.receivingAccountId) {
-        const row = this.db.queryOne(
-          `SELECT * FROM payment_sessions WHERE receiving_account_id = ? AND status IN ('ACTIVE', 'PROCESSING') ORDER BY created_at DESC LIMIT 1`,
-          [input.receivingAccountId]
-        );
-        if (row) session = this.sessionRepo.mapRow(row);
-      }
-      // 2. Otherwise resolve through the VPA named in the message. Scoping by VPA keeps the
-      //    lookup inside a single merchant; the previous gateway-wide "any active receiving
-      //    account" query could settle an unrelated merchant's live session.
-      if (!session && observedVpa) {
-        const row = this.db.queryOne(`
-          SELECT ps.* FROM payment_sessions ps
-          JOIN payment_receiving_accounts ra ON ps.receiving_account_id = ra.id
-          WHERE LOWER(ra.upi_id) = ? AND ps.status IN ('ACTIVE', 'PROCESSING')
-          ORDER BY ps.created_at DESC LIMIT 1
-        `, [observedVpa]);
-        if (row) session = this.sessionRepo.mapRow(row);
-      }
-      // 3. There is deliberately NO gateway-wide fallback. An observation that cannot be tied
-      //    to a specific receiving account must not be attributed to whichever session happens
-      //    to be in flight on another merchant's VPA.
+    if (!session && input.receivingAccountId) {
+      // Try finding active or processing session strictly for this specific receiving account
+      const row = this.db.queryOne(
+        `SELECT * FROM payment_sessions WHERE receiving_account_id = ? AND status IN ('ACTIVE', 'PROCESSING') ORDER BY created_at DESC LIMIT 1`,
+        [input.receivingAccountId]
+      );
+      if (row) session = this.sessionRepo.mapRow(row);
     }
 
     let customer = null;
@@ -319,7 +297,7 @@ export class PaymentVerificationPipeline {
       const cleanSender = (sender || '').trim();
       const digitsOnly = cleanSender.replace(/[\s+-]/g, '');
 
-      // Pure numeric check: Any string consisting solely of numbers (personal mobile numbers or +91 prefixed values)
+      // Pure numeric check: Any string consisting solely of numbers (personal mobile numbers like 9212339720 or +91...)
       const isPureNumeric = /^\d+$/.test(digitsOnly) && !/[a-zA-Z]/.test(cleanSender);
 
       if (isPureNumeric) {
@@ -600,23 +578,14 @@ export class PaymentVerificationPipeline {
     // =========================================================================
     let stage4;
 
-    if (!session && parsedData?.amountPaise) {
-      // Amount alone is not an identifier: two merchants can legitimately have an identical
-      // in-flight amount. Only fall back on amount when the VPA the credit landed on is known,
-      // and then only within that VPA's merchant.
-      const scopeByVpa = observedVpa || (parsedData.vpa ? String(parsedData.vpa).toLowerCase() : null);
-      if (scopeByVpa) {
-        const matchRow = this.db.queryOne(`
-          SELECT ps.* FROM payment_sessions ps
-          JOIN payment_receiving_accounts ra ON ps.receiving_account_id = ra.id
-          WHERE ps.status IN ('ACTIVE', 'PROCESSING')
-            AND ps.amount_paise = ?
-            AND LOWER(ra.upi_id) = ?
-          ORDER BY ps.created_at DESC LIMIT 1
-        `, [Number(parsedData.amountPaise), scopeByVpa]);
-        if (matchRow) {
-          session = this.sessionRepo.mapRow(matchRow);
-        }
+    if (!session && parsedData?.amountPaise && input.receivingAccountId) {
+      const matchRow = this.db.queryOne(`
+        SELECT * FROM payment_sessions
+        WHERE receiving_account_id = ? AND status IN ('ACTIVE', 'PROCESSING') AND amount_paise = ?
+        ORDER BY created_at DESC LIMIT 1
+      `, [input.receivingAccountId, Number(parsedData.amountPaise)]);
+      if (matchRow) {
+        session = this.sessionRepo.mapRow(matchRow);
       }
     }
 
@@ -857,7 +826,15 @@ export class PaymentVerificationPipeline {
       isNotLegitimateBank = !isValidSenderCode || isAttributableToCustomer;
     } else if (source === 'GMAIL') {
       const senderDomain = sender.includes('@') ? sender.split('@')[1]?.toLowerCase().trim() : sender.toLowerCase().trim();
-      const isBankDomain = senderDomain.endsWith('.bank.in') || senderDomain === 'bank.in' || sender === 'TEST' || senderDomain === 'hdfcbank.net';
+      const isBankDomain = senderDomain.endsWith('.bank.in') ||
+        senderDomain === 'bank.in' ||
+        senderDomain === 'hdfcbank.net' ||
+        senderDomain === 'hdfcbank.com' ||
+        senderDomain === 'icicibank.com' ||
+        senderDomain === 'sbi.co.in' ||
+        senderDomain === 'axisbank.com' ||
+        senderDomain === 'kotak.com' ||
+        sender === 'TEST';
       isNotLegitimateBank = !isBankDomain || isAttributableToCustomer;
     } else {
       isNotLegitimateBank = true;
@@ -1116,9 +1093,10 @@ export class PaymentVerificationPipeline {
       status: attributionResult.attributed ? 'ATTRIBUTED' : 'UNRESOLVED',
       outcomeStatus: attributionResult.outcomeStatus,
       details: {
-        attributed: attributionResult.attributed,
+        attributed: Boolean(attributionResult.attributed),
         paymentSessionId: attributionResult.paymentSessionId,
         observationId: attributionResult.observationId,
+        paymentSessionId: attributionResult.paymentSessionId,
         attributedSessionId: attributionResult.paymentSessionId,
         outcomeStatus: attributionResult.outcomeStatus,
         verificationLevel: attributionResult.verificationLevel,

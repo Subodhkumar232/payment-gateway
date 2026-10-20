@@ -63,6 +63,27 @@ export function runMigrations(targetDb) {
   try { db.exec("ALTER TABLE payment_sessions ADD COLUMN verification_sources TEXT DEFAULT '[]';"); } catch {}
   try { db.exec("ALTER TABLE payment_sessions ADD COLUMN verification_tag TEXT DEFAULT 'UNVERIFIED';"); } catch {}
 
+  // Phase 9C/9D: Preflight conflict check for existing databases prior to applying DDL / indexes
+  try {
+    const hasSessions = db.query ? db.queryOne("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name='payment_sessions'") : null;
+    if (hasSessions && Number(hasSessions.count) > 0) {
+      const conflicts = db.query(`
+        SELECT receiving_account_id, COUNT(*) as active_count
+        FROM payment_sessions
+        WHERE status IN ('ACTIVE', 'PROCESSING')
+        GROUP BY receiving_account_id
+        HAVING COUNT(*) > 1
+      `);
+      if (conflicts && conflicts.length > 0) {
+        throw new Error(`[migrate] Cannot apply idx_single_active_session: Detected ${conflicts.length} receiving account(s) with multiple active/processing sessions: ${JSON.stringify(conflicts)}`);
+      }
+    }
+  } catch (err) {
+    if (err.message && err.message.includes('Cannot apply idx_single_active_session')) {
+      throw err;
+    }
+  }
+
   // Execute schema DDL
   db.exec(schemaSql);
 

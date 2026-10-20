@@ -11,7 +11,7 @@ export class SmsObserverService {
    */
   constructor(options = {}) {
     this.apiBaseUrl = options.apiBaseUrl || process.env.BASE_PAYMENT_API_URL || 'http://localhost:6100';
-    this.receivingAccountId = options.receivingAccountId || '00000000-0000-0000-0000-000000000002';
+    this.receivingAccountId = options.receivingAccountId || process.env.RECEIVING_ACCOUNT_ID || null;
     this.pollIntervalMs = options.pollIntervalMs || Number(process.env.SMS_OBSERVER_POLL_INTERVAL_MS || 3000);
     this.observerClient = new PaymentObserverClient({
       apiBaseUrl: this.apiBaseUrl,
@@ -24,38 +24,25 @@ export class SmsObserverService {
     this.observedCount = 0;
   }
 
-  async resolveActiveReceivingAccount() {
-    try {
-      const res = await fetch(`${this.apiBaseUrl}/api/v1/pollers/active-window`, { signal: AbortSignal.timeout(1000) });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.sessions && data.sessions.length > 0) {
-          return data.sessions[0].receivingAccountId;
-        }
-      }
-    } catch {}
-    return null;
-  }
-
   /**
    * Processes and ingests an incoming SMS notification.
+   * Fails closed if no receivingAccountId is configured (account guessing is strictly prohibited).
    * @param {{ text: string, sender?: string, timestamp?: Date | number | string }} sms
    */
   async processSms(sms) {
+    if (!this.receivingAccountId) {
+      console.warn('[SMS Observer] Dropping observation: no receivingAccountId configured (fail-closed, dynamic guessing prohibited)');
+      return null;
+    }
+
     const parsed = BankSmsParser.parse(sms);
     if (!parsed) return null;
-
-    let targetAccountId = this.receivingAccountId;
-    try {
-      const activeAcct = await this.resolveActiveReceivingAccount();
-      if (activeAcct) targetAccountId = activeAcct;
-    } catch {}
 
     const sender = sms.sender || 'BANK-ALERT';
 
     try {
       const result = await this.observerClient.submitObservation({
-        receivingAccountId: targetAccountId,
+        receivingAccountId: this.receivingAccountId,
         amountPaise: parsed.amountPaise,
         amount: parsed.amount,
         observedAt: parsed.observedAt,
