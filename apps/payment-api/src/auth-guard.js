@@ -1,5 +1,29 @@
 import { getAdminToken, getObserverToken, safeEqual } from '@youpi/common';
+import { getDatabase, AdminUserRepository } from '@youpi/db';
 import { HttpServer } from './server.js';
+
+let adminUserRepoCache = null;
+function getAdminUserRepo() {
+  if (!adminUserRepoCache) {
+    try {
+      const db = getDatabase();
+      adminUserRepoCache = new AdminUserRepository(db);
+    } catch {}
+  }
+  return adminUserRepoCache;
+}
+
+function isValidAdminSession(presented) {
+  if (!presented || !presented.startsWith('adm_')) return false;
+  const repo = getAdminUserRepo();
+  if (!repo) return false;
+  try {
+    const session = repo.validateSession(presented);
+    return Boolean(session && session.valid);
+  } catch {
+    return false;
+  }
+}
 
 /** Admin-prefixed routes that are intentionally public (static APK download for pairing). */
 const PUBLIC_ADMIN_PATHS = new Set(['/api/v1/admin/sms-gateway/download-apk']);
@@ -59,7 +83,8 @@ export function authGuard(req, res, pathname, url) {
 
   const ok = presented && (
     safeEqual(presented, getAdminToken()) ||
-    (level === 'observer' && safeEqual(presented, getObserverToken()))
+    (level === 'observer' && safeEqual(presented, getObserverToken())) ||
+    isValidAdminSession(presented)
   );
   if (ok) return false;
 
@@ -70,5 +95,5 @@ export function authGuard(req, res, pathname, url) {
 /** True only when the request carries the admin token (observer token is not enough). */
 export function isAdminRequest(req) {
   const presented = bearerToken(req);
-  return Boolean(presented) && safeEqual(presented, getAdminToken());
+  return Boolean(presented) && (safeEqual(presented, getAdminToken()) || isValidAdminSession(presented));
 }

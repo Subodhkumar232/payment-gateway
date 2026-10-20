@@ -20,10 +20,18 @@ const BASE_SECURITY_HEADERS = Object.freeze({
 const PUBLIC_PATHS = new Set(['/health', '/', '/dashboard']);
 
 /** True when the caller presented the admin bearer token in constant time. */
-function hasAdminToken(req) {
+function hasAdminToken(req, url) {
   const match = /^Bearer\s+(.+)$/i.exec(req.headers?.['authorization'] || '');
-  if (!match) return false;
-  return safeEqual(match[1].trim(), getAdminToken());
+  if (match && safeEqual(match[1].trim(), getAdminToken())) {
+    return true;
+  }
+  if (url && typeof url.searchParams?.get === 'function') {
+    const queryToken = url.searchParams.get('token');
+    if (queryToken && safeEqual(queryToken.trim(), getAdminToken())) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export class ControlCenterServer {

@@ -6,8 +6,13 @@ import App from './App.jsx';
 const container = document.getElementById('root');
 if (container) {
   const reinit = () => {
-    if (typeof window !== 'undefined' && typeof window.initAdminDashboard === 'function') {
-      window.initAdminDashboard();
+    if (typeof window !== 'undefined') {
+      if (typeof window.updateAdminAuthUi === 'function') {
+        window.updateAdminAuthUi();
+      }
+      if (typeof window.initAdminDashboard === 'function') {
+        window.initAdminDashboard();
+      }
     }
   };
 

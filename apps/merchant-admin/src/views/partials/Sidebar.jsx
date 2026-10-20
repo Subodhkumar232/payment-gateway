@@ -114,6 +114,33 @@ export default function Sidebar() {
           <div className="pulse-dot w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]"></div>
           <span>Live Syncing</span>
         </div>
+
+        {/* Session Security & User Info */}
+        <div className="flex items-center justify-between p-2 rounded-lg text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-1.5 truncate">
+            <span className="text-[0.65rem] text-slate-400 font-extrabold uppercase">User:</span>
+            <span id="adminUserBadge" className="font-mono text-slate-700 dark:text-slate-300 font-bold truncate max-w-[90px]">Locked</span>
+          </div>
+          <button
+            id="adminAuthActionBtn"
+            className="text-[0.7rem] text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer flex items-center gap-1 shrink-0"
+            onClick={(e) => {
+              try {
+                if (typeof window !== 'undefined') {
+                  if (typeof window.getAdminAuthToken === 'function' && window.getAdminAuthToken()) {
+                    window.lockAdminSession();
+                  } else if (typeof window.promptAdminAuth === 'function') {
+                    window.promptAdminAuth();
+                  }
+                }
+              } catch(err) { console.error(err); }
+            }}
+            title="Session Authentication"
+          >
+            <span id="adminAuthActionIcon">🔐</span>
+            <span id="adminAuthActionText">Sign In</span>
+          </button>
+        </div>
       </div>
     </aside>
   );

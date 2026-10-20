@@ -1,21 +1,296 @@
 const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined) ? window.API_BASE : '';
-const ADMIN_TOKEN = (typeof window !== 'undefined' && window.ADMIN_TOKEN !== undefined) ? window.ADMIN_TOKEN : '';
 
-if (typeof window !== 'undefined' && window.fetch) {
-  const _origFetch = window.fetch;
-  window.fetch = function (input, init) {
-    init = init ? { ...init } : {};
-    init.headers = init.headers ? (init.headers instanceof Headers ? new Headers(init.headers) : { ...init.headers }) : {};
-    if (ADMIN_TOKEN) {
-      if (init.headers instanceof Headers) {
-        if (!init.headers.has('Authorization')) init.headers.set('Authorization', 'Bearer ' + ADMIN_TOKEN);
-      } else {
-        if (!init.headers['Authorization'] && !init.headers['authorization']) {
-          init.headers['Authorization'] = 'Bearer ' + ADMIN_TOKEN;
-        }
+function getAdminAuthToken() {
+  if (typeof window === 'undefined') return '';
+  try {
+    const token = sessionStorage.getItem('youpi_admin_token') || (typeof window.ADMIN_TOKEN === 'string' ? window.ADMIN_TOKEN : '') || '';
+    const expiry = sessionStorage.getItem('youpi_admin_token_expiry');
+    if (token && expiry) {
+      if (Date.now() > new Date(expiry).getTime()) {
+        clearAdminAuthToken();
+        return '';
       }
     }
-    return _origFetch.call(this, input, init);
+    return token;
+  } catch (e) {
+    return (typeof window.ADMIN_TOKEN === 'string' ? window.ADMIN_TOKEN : '') || '';
+  }
+}
+
+function setAdminAuthToken(token, expiresAt = null) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem('youpi_admin_token', token);
+    if (expiresAt) {
+      sessionStorage.setItem('youpi_admin_token_expiry', expiresAt);
+    }
+  } catch (e) {}
+}
+
+function clearAdminAuthToken() {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.removeItem('youpi_admin_token');
+    sessionStorage.removeItem('youpi_admin_token_expiry');
+    sessionStorage.removeItem('youpi_admin_user');
+  } catch (e) {}
+}
+
+function updateAdminAuthUi() {
+  const token = getAdminAuthToken();
+  const userBadge = document.getElementById('adminUserBadge');
+  const actionBtn = document.getElementById('adminAuthActionBtn');
+  const actionIcon = document.getElementById('adminAuthActionIcon');
+  const actionText = document.getElementById('adminAuthActionText');
+  let savedUser = '';
+  try {
+    savedUser = sessionStorage.getItem('youpi_admin_user') || '';
+  } catch(e) {}
+
+  if (token) {
+    if (userBadge) userBadge.textContent = savedUser || 'admin';
+    if (actionIcon) actionIcon.textContent = '🔒';
+    if (actionText) actionText.textContent = 'Sign Out';
+    if (actionBtn) {
+      actionBtn.className = 'text-[0.7rem] text-red-500 hover:text-red-600 font-bold hover:underline cursor-pointer flex items-center gap-1 shrink-0';
+    }
+  } else {
+    if (userBadge) userBadge.textContent = 'Locked';
+    if (actionIcon) actionIcon.textContent = '🔐';
+    if (actionText) actionText.textContent = 'Sign In';
+    if (actionBtn) {
+      actionBtn.className = 'text-[0.7rem] text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer flex items-center gap-1 shrink-0';
+    }
+  }
+}
+
+let authPromptPromise = null;
+
+function promptAdminAuth(errorMessage = '') {
+  if (typeof document === 'undefined') return Promise.resolve('');
+  const modal = document.getElementById('adminAuthModal');
+  const errorBox = document.getElementById('adminAuthError');
+  const usernameInput = document.getElementById('adminAuthUsername');
+  const passwordInput = document.getElementById('adminAuthPassword');
+  const tokenInput = document.getElementById('adminAuthTokenInput');
+
+  if (modal) {
+    modal.classList.add('is-open');
+    modal.removeAttribute('hidden');
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.setProperty('visibility', 'visible', 'important');
+    modal.style.setProperty('opacity', '1', 'important');
+    modal.style.setProperty('z-index', '2147483647', 'important');
+
+    if (errorBox) {
+      if (errorMessage) {
+        errorBox.textContent = errorMessage;
+        errorBox.removeAttribute('hidden');
+        errorBox.style.setProperty('display', 'block', 'important');
+      } else {
+        errorBox.setAttribute('hidden', '');
+        errorBox.style.setProperty('display', 'none', 'important');
+        errorBox.textContent = '';
+      }
+    }
+    if (passwordInput) passwordInput.value = '';
+    if (tokenInput) tokenInput.value = '';
+    if (usernameInput) {
+      if (!usernameInput.value) {
+        try {
+          usernameInput.value = sessionStorage.getItem('youpi_admin_user') || 'admin';
+        } catch(e) {
+          usernameInput.value = 'admin';
+        }
+      }
+      setTimeout(() => {
+        if (usernameInput.value && passwordInput) {
+          passwordInput.focus();
+        } else if (usernameInput) {
+          usernameInput.focus();
+        }
+      }, 50);
+    }
+  }
+
+  if (authPromptPromise) return authPromptPromise;
+
+  authPromptPromise = new Promise((resolve) => {
+    window._resolveAdminAuth = (token) => {
+      if (modal) {
+        modal.classList.remove('is-open');
+        modal.setAttribute('hidden', '');
+        modal.style.setProperty('display', 'none', 'important');
+      }
+      authPromptPromise = null;
+      resolve(token);
+    };
+  });
+
+  return authPromptPromise;
+}
+
+function closeAdminAuthModal() {
+  const modal = document.getElementById('adminAuthModal');
+  if (modal) {
+    modal.classList.remove('is-open');
+    modal.setAttribute('hidden', '');
+    modal.style.setProperty('display', 'none', 'important');
+  }
+  if (window._resolveAdminAuth) {
+    window._resolveAdminAuth('');
+  }
+}
+
+async function handleAdminAuthSubmit(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const usernameInput = document.getElementById('adminAuthUsername');
+  const passwordInput = document.getElementById('adminAuthPassword');
+  const tokenInput = document.getElementById('adminAuthTokenInput');
+  const errorBox = document.getElementById('adminAuthError');
+  const submitBtn = document.getElementById('adminAuthSubmitBtn');
+
+  const username = (usernameInput?.value || '').trim();
+  const password = (passwordInput?.value || tokenInput?.value || '').trim();
+
+  if (!username && !password) {
+    if (errorBox) {
+      errorBox.textContent = 'Please enter your Login ID and Password.';
+      errorBox.removeAttribute('hidden');
+      errorBox.style.setProperty('display', 'block', 'important');
+    }
+    return;
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Authenticating...';
+  }
+
+  try {
+    const res = await _origFetch('/api/admin/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ username, password })
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok && data.success && data.token) {
+      setAdminAuthToken(data.token, data.expiresAt);
+      if (data.user?.username) {
+        try {
+          sessionStorage.setItem('youpi_admin_user', data.user.username);
+        } catch (e) {}
+      }
+      if (errorBox) {
+        errorBox.setAttribute('hidden', '');
+        errorBox.style.setProperty('display', 'none', 'important');
+        errorBox.textContent = '';
+      }
+      if (window._resolveAdminAuth) {
+        window._resolveAdminAuth(data.token);
+      } else {
+        const modal = document.getElementById('adminAuthModal');
+        if (modal) {
+          modal.classList.remove('is-open');
+          modal.setAttribute('hidden', '');
+          modal.style.setProperty('display', 'none', 'important');
+        }
+      }
+      updateAdminAuthUi();
+      showAdminToast(`🛡️ Welcome, ${data.user?.username || 'Admin'}! Authenticated successfully.`);
+      if (typeof window.startAdminSyncEngines === 'function') {
+        window.startAdminSyncEngines();
+      }
+      if (typeof window.switchSection === 'function') {
+        window.switchSection(activeSection || 'operations');
+      } else {
+        fetchLiveData();
+        fetchGatewaySettings();
+      }
+    } else {
+      if (errorBox) {
+        errorBox.textContent = data.error || 'Authentication failed: Invalid credentials.';
+        errorBox.removeAttribute('hidden');
+        errorBox.style.setProperty('display', 'block', 'important');
+      }
+    }
+  } catch (err) {
+    if (errorBox) {
+      errorBox.textContent = 'Verification error: ' + (err.message || 'Cannot reach server');
+      errorBox.removeAttribute('hidden');
+      errorBox.style.setProperty('display', 'block', 'important');
+    }
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '🔐 Sign In to Merchant Portal';
+    }
+  }
+}
+
+function lockAdminSession() {
+  clearAdminAuthToken();
+  try {
+    sessionStorage.removeItem('youpi_admin_user');
+  } catch(e) {}
+  updateAdminAuthUi();
+  showAdminToast('Dashboard locked. Session cleared.');
+  setTimeout(() => window.location.reload(), 250);
+}
+
+let _origFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : null;
+if (typeof window !== 'undefined' && _origFetch) {
+  window.fetch = async function (input, init) {
+    init = init ? { ...init } : {};
+    init.headers = init.headers ? (init.headers instanceof Headers ? new Headers(init.headers) : { ...init.headers }) : {};
+
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const isProtected = /^\/api\/v1\/admin(\/|$)/.test(url) || /^\/api\/services(\/|$)/.test(url) || /^\/api\/admin(\/|$)/.test(url) || url.includes('/api/v1/admin/');
+
+    if (url.includes('/api/admin/auth/')) {
+      return _origFetch(input, init);
+    }
+
+    if (isProtected) {
+      let token = getAdminAuthToken();
+      if (!token) {
+        await promptAdminAuth();
+        token = getAdminAuthToken();
+      }
+
+      if (token) {
+        if (init.headers instanceof Headers) {
+          if (!init.headers.has('Authorization')) init.headers.set('Authorization', 'Bearer ' + token);
+        } else {
+          if (!init.headers['Authorization'] && !init.headers['authorization']) {
+            init.headers['Authorization'] = 'Bearer ' + token;
+          }
+        }
+      }
+
+      let res = await _origFetch(input, init);
+      if (res.status === 401 && isProtected && token) {
+        clearAdminAuthToken();
+        updateAdminAuthUi();
+        await promptAdminAuth('Session expired or invalid credentials. Please sign in.');
+        token = getAdminAuthToken();
+        if (token) {
+          if (init.headers instanceof Headers) {
+            init.headers.set('Authorization', 'Bearer ' + token);
+          } else {
+            init.headers['Authorization'] = 'Bearer ' + token;
+          }
+          res = await _origFetch(input, init);
+        }
+      }
+      return res;
+    }
+
+    return _origFetch(input, init);
   };
 }
     let currentEnvMode = 'localhost';
@@ -425,7 +700,7 @@ if (typeof window !== 'undefined' && window.fetch) {
     function connectServicesLogsSse() {
       if (servicesLogsSse) return;
       try {
-        servicesLogsSse = new EventSource(ADMIN_TOKEN ? ('/api/logs/stream?token=' + encodeURIComponent(ADMIN_TOKEN)) : '/api/logs/stream');
+        const token = getAdminAuthToken(); if (!token) return; servicesLogsSse = new EventSource('/api/logs/stream?token=' + encodeURIComponent(token));
         servicesLogsSse.addEventListener('log', (e) => {
           try {
             const entry = JSON.parse(e.data);
@@ -2104,7 +2379,7 @@ if (typeof window !== 'undefined' && window.fetch) {
 
     function connectAdminEventsSse() {
       try {
-        const adminSse = new EventSource(ADMIN_TOKEN ? (`${API_BASE}/api/v1/admin/stream?token=` + encodeURIComponent(ADMIN_TOKEN)) : `${API_BASE}/api/v1/admin/stream`);
+        const token = getAdminAuthToken(); if (!token) return; if (window.__adminSse) { try { window.__adminSse.close(); } catch(e) {} } const adminSse = window.__adminSse = new EventSource(`${API_BASE}/api/v1/admin/stream?token=${encodeURIComponent(token)}`);
         adminSse.addEventListener('counter_payment_requested', (event) => {
           pollGlobalCounterPending();
           fetchLiveData();
@@ -3697,6 +3972,11 @@ if (typeof window !== 'undefined' && window.fetch) {
 
     // --- EXPOSE ALL CONTROLLERS GLOBALLY ON WINDOW FOR REACT & DIRECT INTERACTION ---
     function initAdminDashboard() {
+      updateAdminAuthUi();
+      const token = getAdminAuthToken();
+      if (!token) {
+        promptAdminAuth();
+      }
       const validSections = ['operations', 'storeSettings', 'developerHub', 'security'];
       const hashSec = (window.location.hash || '').replace('#', '').trim();
       const searchSec = new URLSearchParams(window.location.search).get('section');
@@ -3706,6 +3986,10 @@ if (typeof window !== 'undefined' && window.fetch) {
 
     if (typeof window !== 'undefined') {
       window.initAdminDashboard = initAdminDashboard;
+      window.handleAdminAuthSubmit = handleAdminAuthSubmit;
+      window.promptAdminAuth = promptAdminAuth;
+      window.lockAdminSession = lockAdminSession;
+      window.getAdminAuthToken = getAdminAuthToken;
       window.switchSection = switchSection;
       window.switchSubView = switchSubView;
       window.renderSubNavBar = renderSubNavBar;
@@ -3795,6 +4079,9 @@ if (typeof window !== 'undefined' && window.fetch) {
       window.fetchTestModeAuditLog = fetchTestModeAuditLog;
       window.handleFalseNarrativeSelect = handleFalseNarrativeSelect;
       window.simPickSession = simPickSession;
+      window.startAdminSyncEngines = startAdminSyncEngines;
+      window.updateAdminAuthUi = updateAdminAuthUi;
+      window.closeAdminAuthModal = closeAdminAuthModal;
     }
 
     // --- INITIALIZATION ---
@@ -3811,21 +4098,41 @@ if (typeof window !== 'undefined' && window.fetch) {
       }
     });
 
-    fetchGatewaySettings();
-    fetchObserversStatus();
-    fetchWhatsAppStatus();
-    loadServices();
-    fetchFalseNarrativeStatus();
-    fetchTestModeStatus();
-    connectServicesLogsSse();
-    connectAdminEventsSse();
-    pollGlobalCounterPending();
+    let syncEnginesStarted = false;
+    function startAdminSyncEngines() {
+      if (!getAdminAuthToken()) return;
+      if (syncEnginesStarted) return;
+      syncEnginesStarted = true;
 
-    pollingTimer = setInterval(fetchLiveData, 2500);
-    setInterval(pollGlobalCounterPending, 4000);
-    setInterval(fetchTunnelStatus, 4000);
-    setInterval(fetchWhatsAppStatus, 4000);
-    setInterval(fetchSmsGatewayDevices, 3500);
-    setInterval(loadServices, 5000);
-    setInterval(fetchFalseNarrativeStatus, 15000);
-    setInterval(fetchTestModeStatus, 15000);
+      try {
+        const savedUser = sessionStorage.getItem('youpi_admin_user');
+        const userBadge = document.getElementById('adminUserBadge');
+        if (savedUser && userBadge) userBadge.textContent = savedUser;
+      } catch(e) {}
+
+      fetchGatewaySettings();
+      fetchObserversStatus();
+      fetchWhatsAppStatus();
+      loadServices();
+      fetchFalseNarrativeStatus();
+      fetchTestModeStatus();
+      connectServicesLogsSse();
+      connectAdminEventsSse();
+      pollGlobalCounterPending();
+
+      if (!pollingTimer) pollingTimer = setInterval(fetchLiveData, 2500);
+      setInterval(pollGlobalCounterPending, 4000);
+      setInterval(fetchTunnelStatus, 4000);
+      setInterval(fetchWhatsAppStatus, 4000);
+      setInterval(fetchSmsGatewayDevices, 3500);
+      setInterval(loadServices, 5000);
+      setInterval(fetchFalseNarrativeStatus, 15000);
+      setInterval(fetchTestModeStatus, 15000);
+    }
+
+    const existingToken = getAdminAuthToken();
+    if (existingToken) {
+      startAdminSyncEngines();
+    } else {
+      promptAdminAuth();
+    }
