@@ -21,6 +21,7 @@ const testFiles = [
   'apps/payment-help/src/__tests__/payment-help.test.js',
   'apps/gmail-observer/src/__tests__/gmail-observer.test.js',
   'apps/gmail-observer/src/__tests__/gmail-bank-alert-security.test.js',
+  'apps/gmail-observer/src/__tests__/gmail-poller-boot-lifecycle.test.js',
   'apps/sms-observer/src/__tests__/sms-observer.test.js',
   'apps/android-observer-app/__tests__/android-observer.test.js',
   'apps/control-center/src/__tests__/control-center.test.js',

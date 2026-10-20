@@ -72,6 +72,89 @@ export class GmailPoller {
     this.tokenExpiresAt = 0;
     this.processedMessageIds = new Set();
     this.loadProcessedIdsFromDisk();
+
+    // Boot lifecycle & health status
+    this.lifecycleState = 'STANDBY';
+    this.degradedReason = null;
+    this.lastBootCheckAt = null;
+    this.bootRetryTimer = null;
+    this.backoffDelayMs = 5000;
+  }
+
+  clearBootRetryTimer() {
+    if (this.bootRetryTimer) {
+      clearTimeout(this.bootRetryTimer);
+      this.bootRetryTimer = null;
+    }
+  }
+
+  scheduleBootRetry(reason) {
+    this.clearBootRetryTimer();
+    if (reason === 'TOKEN_REFRESH_FAILED' || reason === 'OAUTH_CREDENTIALS_EXPIRED') {
+      this.lifecycleState = 'DEGRADED';
+    } else if (this.lifecycleState !== 'DEGRADED') {
+      this.lifecycleState = 'STANDBY';
+    }
+    this.degradedReason = reason;
+
+    // Bounded exponential backoff between 5s and 60s
+    const delay = this.backoffDelayMs;
+    this.backoffDelayMs = Math.min(this.backoffDelayMs * 2, 60000);
+
+    this.bootRetryTimer = setTimeout(() => {
+      this.startBootLifecycle().catch(() => {});
+    }, delay);
+    if (typeof this.bootRetryTimer.unref === 'function') {
+      this.bootRetryTimer.unref();
+    }
+  }
+
+  /**
+   * Evaluates all startup prerequisites before enabling active polling.
+   * Prerequisites:
+   * 1. Receiving account ID must be configured and valid.
+   * 2. Gmail OAuth credentials must exist.
+   * 3. Google access token must be successfully acquired.
+   * @returns {Promise<{ success: boolean, state: string, reason?: string }>}
+   */
+  async startBootLifecycle() {
+    this.lastBootCheckAt = new Date().toISOString();
+
+    // 1. Validate receiving account ID
+    if (!this.receivingAccountId) {
+      console.log('[Gmail Observer Lifecycle] Standby: RECEIVING_ACCOUNT_ID is not configured.');
+      this.scheduleBootRetry('MISSING_RECEIVING_ACCOUNT');
+      return { success: false, state: 'STANDBY', reason: 'MISSING_RECEIVING_ACCOUNT' };
+    }
+
+    // 2. Fetch / verify OAuth credentials
+    if (!this.credentials?.refreshToken || !this.credentials?.clientId || !this.credentials?.clientSecret) {
+      await this.fetchCredentialsFromPaymentApi();
+    }
+
+    const { clientId, clientSecret, refreshToken } = this.credentials || {};
+    if (!clientId || !clientSecret || !refreshToken) {
+      console.log('[Gmail Observer Lifecycle] Standby: Gmail OAuth credentials not configured in Payment API.');
+      this.scheduleBootRetry('MISSING_OAUTH_CREDENTIALS');
+      return { success: false, state: 'STANDBY', reason: 'MISSING_OAUTH_CREDENTIALS' };
+    }
+
+    // 3. Test token acquisition
+    const token = await this.getAccessToken();
+    if (!token) {
+      console.warn('[Gmail Observer Lifecycle] Degraded: Token acquisition/refresh failed.');
+      this.scheduleBootRetry('TOKEN_REFRESH_FAILED');
+      return { success: false, state: 'DEGRADED', reason: 'TOKEN_REFRESH_FAILED' };
+    }
+
+    // All prerequisites pass!
+    this.clearBootRetryTimer();
+    this.backoffDelayMs = 5000;
+    this.lifecycleState = 'ACTIVE';
+    this.degradedReason = null;
+    this.start();
+    console.log(`[Gmail Observer Lifecycle] Active: Connected to ${redactSensitiveData(this.credentials.connectedEmail || 'Gmail Account')}`);
+    return { success: true, state: 'ACTIVE' };
   }
 
   loadProcessedIdsFromDisk() {
@@ -241,6 +324,8 @@ export class GmailPoller {
   start() {
     if (this.isRunning) return;
     this.isRunning = true;
+    this.lifecycleState = 'ACTIVE';
+    this.degradedReason = null;
     console.log(`[Gmail Observer] Poller started (interval: ${this.pollIntervalMs}ms)`);
 
     // Run first poll cycle immediately
@@ -253,12 +338,14 @@ export class GmailPoller {
   }
 
   stop() {
+    this.clearBootRetryTimer();
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
     this.isRunning = false;
     this._isPolling = false;
+    this.lifecycleState = 'STOPPED';
     console.log('[Gmail Observer] Poller stopped.');
   }
 
