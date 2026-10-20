@@ -5,6 +5,7 @@ const testFiles = [
   'packages/db/src/__tests__/customer-reset.test.js',
   'packages/db/src/__tests__/auth-matrix.test.js',
   'packages/db/src/__tests__/db.test.js',
+  'packages/db/src/__tests__/schema-parity.test.js',
   'packages/core/src/__tests__/core.test.js',
   'packages/core/src/__tests__/queue-timing.test.js',
   'packages/core/src/__tests__/webhook-engine.test.js',
@@ -33,6 +34,7 @@ const testFiles = [
   'apps/payment-api/src/__tests__/whitelabel-branding.test.js',
   'apps/payment-api/src/__tests__/cod-parallel-timer-decoupling.test.js',
   'apps/payment-api/src/__tests__/gateway-hardening-invariants.test.js',
+  'apps/payment-api/src/__tests__/observer-poller.test.js',
   'scripts/chaos-concurrency.test.js',
   'scripts/production-infrastructure.test.js'
 ];
