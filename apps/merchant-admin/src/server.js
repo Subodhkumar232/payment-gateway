@@ -252,6 +252,7 @@ export class AdminServer {
     // This completely eliminates CORS errors, tunnel downtime 530s, and cross-origin failures.
     const clientApiBase = '';
     html = html.replaceAll('{{API_BASE_URL}}', clientApiBase);
+    html = html.replaceAll('{{ADMIN_TOKEN}}', getAdminToken());
     return html;
   }
 
@@ -312,7 +313,10 @@ export class AdminServer {
           port: ccPort,
           path: req.url,
           method: req.method,
-          headers: sanitizedForwardHeaders(req, `localhost:${ccPort}`)
+          headers: {
+            ...sanitizedForwardHeaders(req, `localhost:${ccPort}`),
+            authorization: req.headers['authorization'] || `Bearer ${getAdminToken()}`
+          }
         }, (proxyRes) => {
           res.writeHead(proxyRes.statusCode, proxyRes.headers);
           proxyRes.pipe(res);
@@ -438,7 +442,7 @@ export class AdminServer {
           const content = fs.readFileSync(jsPath, 'utf8');
           res.writeHead(200, {
             'Content-Type': 'application/javascript; charset=utf-8',
-            'Cache-Control': 'public, max-age=3600',
+            'Cache-Control': 'no-cache',
             'Access-Control-Allow-Origin': '*'
           });
           res.end(content);

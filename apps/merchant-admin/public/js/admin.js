@@ -1,4 +1,23 @@
 const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined) ? window.API_BASE : '';
+const ADMIN_TOKEN = (typeof window !== 'undefined' && window.ADMIN_TOKEN !== undefined) ? window.ADMIN_TOKEN : '';
+
+if (typeof window !== 'undefined' && window.fetch) {
+  const _origFetch = window.fetch;
+  window.fetch = function (input, init) {
+    init = init ? { ...init } : {};
+    init.headers = init.headers ? (init.headers instanceof Headers ? new Headers(init.headers) : { ...init.headers }) : {};
+    if (ADMIN_TOKEN) {
+      if (init.headers instanceof Headers) {
+        if (!init.headers.has('Authorization')) init.headers.set('Authorization', 'Bearer ' + ADMIN_TOKEN);
+      } else {
+        if (!init.headers['Authorization'] && !init.headers['authorization']) {
+          init.headers['Authorization'] = 'Bearer ' + ADMIN_TOKEN;
+        }
+      }
+    }
+    return _origFetch.call(this, input, init);
+  };
+}
     let currentEnvMode = 'localhost';
     let currentDomainPrefix = 'pay';
     let currentDomainTld = '';
@@ -22,6 +41,30 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
+    }
+
+    // Helper to escape HTML safely while preserving falsy values such as 0
+    function escapeHtmlValue(str) {
+      if (str === null || str === undefined) return '';
+      return escapeHtml(String(str));
+    }
+
+    // Escapes an attribute value that is delimited by double quotes.
+    // Single quotes are deliberately left alone: they cannot terminate the
+    // attribute, and the browser decodes entities before the inline handler
+    // runs, so escaping them here would not prevent a break-out anyway.
+    function escapeAttribute(str) {
+      return escapeHtmlValue(str)
+        .replace(/&#039;/g, "'")
+        .replace(/&quot;/g, '&quot;');
+    }
+
+    // Builds a JavaScript literal that is safe to place inside a double-quoted
+    // inline event handler attribute. Use instead of hand-written quotes:
+    //   onclick="confirmCounterPayment(${jsArg(id)}, ${jsArg(method)})"
+    function jsArg(value) {
+      const literal = JSON.stringify(value === null || value === undefined ? '' : String(value));
+      return escapeAttribute(literal);
     }
 
     // --- REAL LIGHT / DARK THEME CONTROLLER ---
@@ -253,10 +296,10 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
           <td>
             <div style="display:flex; gap:0.4rem;">
               ${!isRunning ? `
-                <button class="btn btn-success" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="startService('${s.id}')">▶ Start</button>
+                <button class="btn btn-success" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="startService(${jsArg(s.id)})">▶ Start</button>
               ` : `
-                <button class="btn btn-danger" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="stopService('${s.id}')">⏹ Stop</button>
-                <button class="btn btn-secondary" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="restartService('${s.id}')">🔄 Restart</button>
+                <button class="btn btn-danger" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="stopService(${jsArg(s.id)})">⏹ Stop</button>
+                <button class="btn btn-secondary" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="restartService(${jsArg(s.id)})">🔄 Restart</button>
               `}
               ${isRunning && s.port ? `
                 <a href="http://localhost:${s.port}" target="_blank" class="btn btn-secondary" style="padding:0.3rem 0.55rem; font-size:0.75rem; text-decoration:none;" title="Open in browser">↗</a>
@@ -382,7 +425,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
     function connectServicesLogsSse() {
       if (servicesLogsSse) return;
       try {
-        servicesLogsSse = new EventSource('/api/logs/stream');
+        servicesLogsSse = new EventSource(ADMIN_TOKEN ? ('/api/logs/stream?token=' + encodeURIComponent(ADMIN_TOKEN)) : '/api/logs/stream');
         servicesLogsSse.addEventListener('log', (e) => {
           try {
             const entry = JSON.parse(e.data);
@@ -560,11 +603,11 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
       }
       tbody.innerHTML = queue.map(q => `
       <tr>
-        <td><strong>#${q.queuePosition}</strong></td>
-        <td>Order #${q.orderId}</td>
+        <td><strong>#${escapeHtmlValue(q.queuePosition)}</strong></td>
+        <td>Order #${escapeHtmlValue(q.orderId)}</td>
         <td>₹${(Number(q.amountPaise) / 100).toFixed(2)}</td>
         <td><span class="badge badge-warning">QUEUED</span></td>
-        <td>${new Date(q.createdAt).toLocaleTimeString()}</td>
+        <td>${escapeHtmlValue(new Date(q.createdAt).toLocaleTimeString())}</td>
       </tr>
     `).join('');
     }
@@ -640,7 +683,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
 
       tbody.innerHTML = pending.map(p => `
       <tr>
-        <td><strong>Order #${p.orderId}</strong></td>
+        <td><strong>Order #${escapeHtmlValue(p.orderId)}</strong></td>
         <td><code style="font-size:0.75rem;">${p.id.substring(0, 16)}...</code></td>
         <td><strong style="color:#34d399; font-size:1.15rem;">₹${(Number(p.amountPaise) / 100).toFixed(2)}</strong></td>
         <td>
@@ -651,8 +694,8 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
         <td>${new Date(p.createdAt).toLocaleTimeString()}</td>
         <td>
           <div style="display:flex; gap:0.4rem;">
-            <button class="btn btn-success" style="padding:0.35rem 0.75rem; font-size:0.78rem;" onclick="confirmCounterPayment('${p.id}', '${p.method}')">✓ Approve</button>
-            <button class="btn btn-danger" style="padding:0.35rem 0.75rem; font-size:0.78rem;" onclick="declineCounterPayment('${p.id}', '${p.method}')">✕ Decline</button>
+            <button class="btn btn-success" style="padding:0.35rem 0.75rem; font-size:0.78rem;" onclick="confirmCounterPayment(${jsArg(p.id)}, ${jsArg(p.method)})">✓ Approve</button>
+            <button class="btn btn-danger" style="padding:0.35rem 0.75rem; font-size:0.78rem;" onclick="declineCounterPayment(${jsArg(p.id)}, ${jsArg(p.method)})">✕ Decline</button>
           </div>
         </td>
       </tr>
@@ -747,9 +790,9 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
           if (p.status === 'SUCCESS') {
             const tag = p.verificationTag || (p.verificationLevel >= 2 ? 'Dual Verification' : 'Single Verification');
             if (p.verificationLevel >= 2) {
-              verifyBadge = `<span class="badge badge-success">✓✓ ${tag}</span>`;
+              verifyBadge = `<span class="badge badge-success">✓✓ ${escapeHtmlValue(tag)}</span>`;
             } else {
-              verifyBadge = `<span class="badge badge-info">✓ ${tag}</span>`;
+              verifyBadge = `<span class="badge badge-info">✓ ${escapeHtmlValue(tag)}</span>`;
             }
           }
 
@@ -759,15 +802,15 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
 
           return `
           <tr>
-            <td><strong>Order #${p.orderId}</strong></td>
-            <td><code>${p.id}</code></td>
+            <td><strong>Order #${escapeHtmlValue(p.orderId)}</strong></td>
+            <td><code>${escapeHtmlValue(p.id)}</code></td>
             <td>₹${(Number(p.amountPaise) / 100).toFixed(2)}</td>
-            <td>${p.method}</td>
-            <td><span class="badge ${p.status === 'SUCCESS' ? 'badge-success' : (p.status === 'ACTIVE' ? 'badge-info' : 'badge-danger')}">${p.status}</span></td>
+            <td>${escapeHtmlValue(p.method)}</td>
+            <td><span class="badge ${p.status === 'SUCCESS' ? 'badge-success' : (p.status === 'ACTIVE' ? 'badge-info' : 'badge-danger')}">${escapeHtmlValue(p.status)}</span></td>
             <td>${verifyBadge}</td>
             <td>${sourcesChips}</td>
             <td>${new Date(p.createdAt).toLocaleTimeString()}</td>
-            <td>${p.completedAt ? new Date(p.completedAt).toLocaleTimeString() : '-'}</td>
+            <td>${p.completedAt ? escapeHtmlValue(new Date(p.completedAt).toLocaleTimeString()) : "-"}</td>
           </tr>
         `;
         }).join('');
@@ -1021,11 +1064,11 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
 
         let actionBtns = '';
         if (!a.isActive) {
-          actionBtns += `<button class="btn btn-primary" style="padding:0.35rem 0.65rem; font-size:0.78rem; margin-right:0.4rem;" onclick="activateVpa('${a.id}')">Activate</button>`;
+          actionBtns += `<button class="btn btn-primary" style="padding:0.35rem 0.65rem; font-size:0.78rem; margin-right:0.4rem;" onclick="activateVpa(${jsArg(a.id)})">Activate</button>`;
         } else {
-          actionBtns += `<button class="btn btn-secondary" style="padding:0.35rem 0.65rem; font-size:0.78rem; margin-right:0.4rem;" onclick="toggleVpa('${a.id}')">Deactivate</button>`;
+          actionBtns += `<button class="btn btn-secondary" style="padding:0.35rem 0.65rem; font-size:0.78rem; margin-right:0.4rem;" onclick="toggleVpa(${jsArg(a.id)})">Deactivate</button>`;
         }
-        actionBtns += `<button class="btn btn-danger" style="padding:0.35rem 0.65rem; font-size:0.78rem;" onclick="deleteVpa('${a.id}', '${a.upiId}')">Delete</button>`;
+        actionBtns += `<button class="btn btn-danger" style="padding:0.35rem 0.65rem; font-size:0.78rem;" onclick="deleteVpa(${jsArg(a.id)}, ${jsArg(a.upiId)})">Delete</button>`;
 
         return `
         <tr style="${a.isActive ? 'background:var(--primary-light);' : ''}">
@@ -1557,7 +1600,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
           <td><code style="font-size:0.75rem; color:#38bdf8;">${escapeHtml(id)}</code></td>
           <td><span style="font-size:0.75rem; color:var(--text-muted);">${timeStr}</span></td>
           <td>
-            <button class="btn btn-danger" style="padding:0.25rem 0.6rem; font-size:0.72rem;" onclick="unpairSmsDevice('${escapeHtml(id)}')">Unpair</button>
+            <button class="btn btn-danger" style="padding:0.25rem 0.6rem; font-size:0.72rem;" onclick="unpairSmsDevice(${jsArg(id)})">Unpair</button>
           </td>
         </tr>
       `;
@@ -1698,9 +1741,11 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
         };
 
         const onMessage = (event) => {
-          if (event.data && event.data.type === 'GMAIL_OAUTH_SUCCESS') {
-            cleanup(event.data.email);
-          }
+          if (!event.data || event.data.type !== 'GMAIL_OAUTH_SUCCESS') return;
+          // Only the OAuth popup we opened may report a successful link.
+          if (event.source !== googleAuthPopup) return;
+          if (event.origin !== window.location.origin) return;
+          cleanup(event.data.email);
         };
         window.addEventListener('message', onMessage);
 
@@ -2059,7 +2104,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
 
     function connectAdminEventsSse() {
       try {
-        const adminSse = new EventSource(`${API_BASE}/api/v1/admin/stream`);
+        const adminSse = new EventSource(ADMIN_TOKEN ? (`${API_BASE}/api/v1/admin/stream?token=` + encodeURIComponent(ADMIN_TOKEN)) : `${API_BASE}/api/v1/admin/stream`);
         adminSse.addEventListener('counter_payment_requested', (event) => {
           pollGlobalCounterPending();
           fetchLiveData();
@@ -2116,12 +2161,12 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
             <div class="cashier-modal-header">
               <div style="display:flex; align-items:center; gap:6px;">
                 <span class="cashier-modal-badge ${badgeClass}">${methodLabel}</span>
-                <strong style="color:#ffffff; font-size:12px; font-family:monospace;">${orderIdStr}</strong>
-                <span style="color:#f59e0b; font-size:12px; font-weight:700;">${amountStr}</span>
+                <strong style="color:#ffffff; font-size:12px; font-family:monospace;">${escapeHtmlValue(orderIdStr)}</strong>
+                <span style="color:#f59e0b; font-size:12px; font-weight:700;">${escapeHtmlValue(amountStr)}</span>
               </div>
               <div style="display:flex; align-items:center; gap:4px;">
-                <button type="button" class="cashier-btn-minimize" onclick="toggleMinimizeCard('${p.id}')">▲</button>
-                <button type="button" class="cashier-btn-accept" style="padding:4px 8px; font-size:11px;" onclick="confirmCounterPayment('${p.id}', '${p.method}')">✓ Accept</button>
+                <button type="button" class="cashier-btn-minimize" onclick="toggleMinimizeCard(${jsArg(p.id)})">▲</button>
+                <button type="button" class="cashier-btn-accept" style="padding:4px 8px; font-size:11px;" onclick="confirmCounterPayment(${jsArg(p.id)}, ${jsArg(p.method)})">✓ Accept</button>
               </div>
             </div>
           </div>
@@ -2133,24 +2178,24 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
           <div class="cashier-modal-header">
             <div style="display:flex; align-items:center; gap:8px;">
               <span class="cashier-modal-badge ${badgeClass}">${methodLabel}</span>
-              <strong style="color:#ffffff; font-size:13px; font-family:monospace;">${orderIdStr}</strong>
+              <strong style="color:#ffffff; font-size:13px; font-family:monospace;">${escapeHtmlValue(orderIdStr)}</strong>
             </div>
-            <button type="button" class="cashier-btn-minimize" onclick="toggleMinimizeCard('${p.id}')">—</button>
+            <button type="button" class="cashier-btn-minimize" onclick="toggleMinimizeCard(${jsArg(p.id)})">—</button>
           </div>
           <div class="cashier-modal-body">
             <div class="cashier-modal-amount-row">
               <div>
                 <div style="font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Payable at Desk</div>
-                <div style="font-size:1.35rem; font-weight:900; color:${isCash ? '#22c55e' : '#38bdf8'};">${amountStr}</div>
+                <div style="font-size:1.35rem; font-weight:900; color:${isCash ? "#22c55e" : "#38bdf8"};">${escapeHtmlValue(amountStr)}</div>
               </div>
               <div style="text-align:right;">
-                <div style="font-size:11px; color:var(--text-muted);">${customerText}</div>
+                <div style="font-size:11px; color:var(--text-muted);">${escapeHtmlValue(customerText)}</div>
                 <div style="font-size:11px; color:#64748b; margin-top:2px;">Requested at counter</div>
               </div>
             </div>
             <div class="cashier-modal-actions">
-              <button type="button" class="cashier-btn-accept" onclick="confirmCounterPayment('${p.id}', '${p.method}')">✓ Confirm &amp; Accept</button>
-              <button type="button" class="cashier-btn-decline" onclick="declineCounterPayment('${p.id}', '${p.method}')">✕ Decline</button>
+              <button type="button" class="cashier-btn-accept" onclick="confirmCounterPayment(${jsArg(p.id)}, ${jsArg(p.method)})">✓ Confirm &amp; Accept</button>
+              <button type="button" class="cashier-btn-decline" onclick="declineCounterPayment(${jsArg(p.id)}, ${jsArg(p.method)})">✕ Decline</button>
             </div>
           </div>
         </div>
@@ -2863,7 +2908,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
           else if (s.status === 'CANCELLED' || s.status === 'EXPIRED' || s.status === 'FAILED') { badgeColor = '#ffffff'; badgeBg = '#ef4444'; }
 
           return `
-          <div class="sim-session-row" onclick="simPickSession('${s.id}')" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:0.5rem 0.65rem; border-radius:6px; margin-bottom:0.35rem; background:#0f172a; border:1px solid #1e293b; transition:all 0.15s ease;" id="simSessItem_${s.id}">
+          <div class="sim-session-row" onclick="simPickSession(${jsArg(s.id)})" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:0.5rem 0.65rem; border-radius:6px; margin-bottom:0.35rem; background:#0f172a; border:1px solid #1e293b; transition:all 0.15s ease;" id="simSessItem_${escapeAttribute(s.id)}">
             <div>
               <div style="display:flex; align-items:center; gap:0.4rem;">
                 <input type="radio" name="simSessionRadio" id="radio_${s.id}" style="accent-color:#3b82f6; cursor:pointer;" />
@@ -3260,8 +3305,8 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
           <td><span class="badge badge-info" style="font-size:0.7rem;">${escapeHtml(u.source || 'SMS')}</span></td>
           <td style="text-align:right;">
             <div style="display:inline-flex; gap:0.4rem;">
-              <button class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="viewBanDetails('${u.id}')">🔍 Details</button>
-              <button class="btn btn-success" style="padding:0.3rem 0.6rem; font-size:0.75rem; background:#059669; border-color:#059669;" onclick="promptUnbanCustomer('${u.id}', '${escapeHtml(u.name || '')}', '${escapeHtml(u.phone || u.mobileNumber || '')}')">🔓 Unban</button>
+              <button class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="viewBanDetails(${jsArg(u.id)})">🔍 Details</button>
+              <button class="btn btn-success" style="padding:0.3rem 0.6rem; font-size:0.75rem; background:#059669; border-color:#059669;" onclick="promptUnbanCustomer(${jsArg(u.id)}, ${jsArg(u.name || "")}, ${jsArg(u.phone || u.mobileNumber || "")})">🔓 Unban</button>
             </div>
           </td>
         </tr>
@@ -3597,7 +3642,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
             <td style="color:#f87171; font-size:0.8rem;">${escapeHtml(e.fraudReason || '-')}</td>
             <td><code style="color:#fca5a5; font-size:0.75rem; background:#020617; padding:2px 6px; border-radius:4px;">${escapeHtml(rawSnippet)}</code></td>
             <td style="text-align:right;">
-              ${e.customerId ? `<button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="viewBanDetails('${e.customerId}')">View Dossier</button>` : '-'}
+              ${e.customerId ? `<button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="viewBanDetails(${jsArg(e.customerId)})">View Dossier</button>` : '-'}
             </td>
           </tr>
         `;
@@ -3647,6 +3692,109 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
       } catch (e) {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#f87171; padding:1.5rem;">⚠️ Failed to load history: ${escapeHtml(e.message)}</td></tr>`;
       }
+    }
+
+
+    // --- EXPOSE ALL CONTROLLERS GLOBALLY ON WINDOW FOR REACT & DIRECT INTERACTION ---
+    function initAdminDashboard() {
+      const validSections = ['operations', 'storeSettings', 'developerHub', 'security'];
+      const hashSec = (window.location.hash || '').replace('#', '').trim();
+      const searchSec = new URLSearchParams(window.location.search).get('section');
+      const initialSec = validSections.includes(hashSec) ? hashSec : (validSections.includes(searchSec) ? searchSec : 'operations');
+      switchSection(initialSec);
+    }
+
+    if (typeof window !== 'undefined') {
+      window.initAdminDashboard = initAdminDashboard;
+      window.switchSection = switchSection;
+      window.switchSubView = switchSubView;
+      window.renderSubNavBar = renderSubNavBar;
+      window.toggleThemeManual = toggleThemeManual;
+      window.updateThemeForSection = updateThemeForSection;
+      window.applyTheme = applyTheme;
+      window.toggleYoupiStore = toggleYoupiStore;
+      window.fetchLiveData = fetchLiveData;
+      window.fetchGatewaySettings = fetchGatewaySettings;
+      window.fetchObserversStatus = fetchObserversStatus;
+      window.fetchWhatsAppStatus = fetchWhatsAppStatus;
+      window.loadServices = loadServices;
+      window.fetchFalseNarrativeStatus = fetchFalseNarrativeStatus;
+      window.fetchTestModeStatus = fetchTestModeStatus;
+      window.connectServicesLogsSse = connectServicesLogsSse;
+      window.connectAdminEventsSse = connectAdminEventsSse;
+      window.pollGlobalCounterPending = pollGlobalCounterPending;
+      window.fetchCounterPayments = fetchCounterPayments;
+      window.fetchCodOrders = fetchCodOrders;
+      window.fetchPaymentsLedger = fetchPaymentsLedger;
+      window.fetchSecurityEvents = fetchSecurityEvents;
+      window.fetchSecurityHistory = fetchSecurityHistory;
+      window.fetchBannedUsers = fetchBannedUsers;
+      window.filterBannedUsers = filterBannedUsers;
+      window.confirmCounterPayment = confirmCounterPayment;
+      window.declineCounterPayment = declineCounterPayment;
+      window.activateVpa = activateVpa;
+      window.toggleVpa = toggleVpa;
+      window.deleteVpa = deleteVpa;
+      window.unpairSmsDevice = unpairSmsDevice;
+      window.viewBanDetails = viewBanDetails;
+      window.promptUnbanCustomer = promptUnbanCustomer;
+      window.closeBanDetailsModal = closeBanDetailsModal;
+      window.openManualBanModal = openManualBanModal;
+      window.closeManualBanModal = closeManualBanModal;
+      window.closeUnbanModal = closeUnbanModal;
+      window.executeManualBan = executeManualBan;
+      window.executeUnbanCustomer = executeUnbanCustomer;
+      window.handleManualBanCustomerChange = handleManualBanCustomerChange;
+      window.handleUnbanReasonChange = handleUnbanReasonChange;
+      window.handleModalUnbanClick = handleModalUnbanClick;
+      window.copySmsToken = copySmsToken;
+      window.fetchSmsPairQr = fetchSmsPairQr;
+      window.sendTestBankSms = sendTestBankSms;
+      window.setEnvMode = setEnvMode;
+      window.updateCloudflarePreview = updateCloudflarePreview;
+      window.saveDomainSettings = saveDomainSettings;
+      window.copyAllMappings = copyAllMappings;
+      window.startAutomatedGoogleAuth = startAutomatedGoogleAuth;
+      window.disconnectGmailAccount = disconnectGmailAccount;
+      window.testGmailConnection = testGmailConnection;
+      window.openGmailGuideModal = openGmailGuideModal;
+      window.closeGmailGuideModal = closeGmailGuideModal;
+      window.toggleSecretVisibility = toggleSecretVisibility;
+      window.copyGmailRedirectUri = copyGmailRedirectUri;
+      window.saveGmailCredentials = saveGmailCredentials;
+      window.reconnectWhatsApp = reconnectWhatsApp;
+      window.disconnectWhatsApp = disconnectWhatsApp;
+      window.startAllServices = startAllServices;
+      window.stopAllServices = stopAllServices;
+      window.filterLogs = filterLogs;
+      window.clearLogsConsole = clearLogsConsole;
+      window.saveMerchantBrandingAndToggles = saveMerchantBrandingAndToggles;
+      window.updateLiveWhiteLabelPreview = updateLiveWhiteLabelPreview;
+      window.syncColorPickerToText = syncColorPickerToText;
+      window.syncTextColorToPicker = syncTextColorToPicker;
+      window.applyQuickPalette = applyQuickPalette;
+      window.addNewUpiAccount = addNewUpiAccount;
+      window.setSellingMode = setSellingMode;
+      window.promptClearAllQueue = promptClearAllQueue;
+      window.initPaymentSimulator = initPaymentSimulator;
+      window.simQuickEnableTestMode = simQuickEnableTestMode;
+      window.simFetchCustomers = simFetchCustomers;
+      window.simFilterCustomers = simFilterCustomers;
+      window.simSelectCustomer = simSelectCustomer;
+      window.simReloadSessions = simReloadSessions;
+      window.simToggleTimeInput = simToggleTimeInput;
+      window.simInjectObservation = simInjectObservation;
+      window.simFetchHistory = simFetchHistory;
+      window.closeTestModeModal = closeTestModeModal;
+      window.confirmEnableTestMode = confirmEnableTestMode;
+      window.handleTestModeToggle = handleTestModeToggle;
+      window.generateFakeSmsTemplate = generateFakeSmsTemplate;
+      window.generateFakeGmailTemplate = generateFakeGmailTemplate;
+      window.handleTestTimestampChange = handleTestTimestampChange;
+      window.injectTestMessage = injectTestMessage;
+      window.fetchTestModeAuditLog = fetchTestModeAuditLog;
+      window.handleFalseNarrativeSelect = handleFalseNarrativeSelect;
+      window.simPickSession = simPickSession;
     }
 
     // --- INITIALIZATION ---

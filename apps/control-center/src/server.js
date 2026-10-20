@@ -84,7 +84,7 @@ export class ControlCenterServer {
       // Every remaining route controls processes, streams service logs or exposes internal
       // state. Without a token these are a remote denial-of-service and a log-exfiltration
       // primitive, so the admin bearer is required.
-      if (!PUBLIC_PATHS.has(pathname) && !hasAdminToken(req)) {
+      if (!PUBLIC_PATHS.has(pathname) && !hasAdminToken(req, url)) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Unauthorized', code: 'AUTH_REQUIRED' }));
         return;
