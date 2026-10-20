@@ -6,10 +6,22 @@
   "main": "./src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test src/__tests__/**/*.test.js"
+    "test": "node --test src/__tests__/**/*.test.js",
+    "build:jsx": "node scripts/build-jsx.js",
+    "build:css": "tailwindcss -i ./src/styles/input.css -o ./public/css/admin.css --minify",
+    "watch:css": "tailwindcss -i ./src/styles/input.css -o ./public/css/admin.css --watch",
+    "build": "npm run build:jsx && npm run build:css"
   },
   "dependencies": {
     "@youpi/common": "*",
-    "@youpi/db": "*"
+    "@youpi/db": "*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.20",
+    "esbuild": "^0.25.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17"
   }
 }

@@ -7,6 +7,7 @@ import { getDatabase } from './database.js';
 import { MerchantRepository } from './repositories/merchant.repository.js';
 import { ReceivingAccountRepository } from './repositories/receiving-account.repository.js';
 import { CustomerRepository } from './repositories/customer.repository.js';
+import { AdminUserRepository } from './repositories/admin-user.repository.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -177,6 +178,26 @@ export function runMigrations(targetDb) {
         isPhoneVerified: false
       });
     }
+  }
+
+  // Seed default administrator into SQLite database if not present
+  try {
+    const adminUserRepo = new AdminUserRepository(db);
+    const existingAdmin = adminUserRepo.findByUsernameOrEmail('admin');
+    if (!existingAdmin) {
+      const initialUsername = (process.env.ADMIN_USERNAME || 'admin').trim();
+      const initialEmail = (process.env.INITIAL_ADMIN_EMAIL || process.env.ADMIN_EMAIL || 'admin@youpi.local').trim();
+      const initialPassword = process.env.ADMIN_PASSWORD || process.env.INITIAL_ADMIN_PASSWORD || 'AdminSecurePassword123!';
+      adminUserRepo.create({
+        id: '00000000-0000-0000-0000-000000000009',
+        username: initialUsername,
+        email: initialEmail,
+        password: initialPassword,
+        role: 'superadmin'
+      });
+    }
+  } catch (err) {
+    console.warn('[migrate] Admin user seed warning:', err.message);
   }
 
   return {

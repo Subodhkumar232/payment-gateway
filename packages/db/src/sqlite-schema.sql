@@ -262,3 +262,34 @@ CREATE INDEX IF NOT EXISTS idx_security_events_type ON security_events (event_ty
 
 
 
+
+-- 12. Admin Users Table (Database-backed Administrator Credentials)
+CREATE TABLE IF NOT EXISTS admin_users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'admin',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_users_username ON admin_users (username);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_users_email ON admin_users (email);
+
+-- 13. Admin Sessions Table (Server-Authoritative Time-Limited Access Tokens)
+CREATE TABLE IF NOT EXISTS admin_sessions (
+    id TEXT PRIMARY KEY,
+    admin_user_id TEXT NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    ip_address TEXT,
+    user_agent TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_token_hash ON admin_sessions (token_hash, is_active);
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_user ON admin_sessions (admin_user_id);

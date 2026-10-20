@@ -64,8 +64,17 @@ arun-test-ci.md
 TRACKER.md
 
 # Root Testing Screenshots
-/*.png
-/*.jpg
-/*.jpeg
-/*.mp4
-/*.webm
+*.png
+*.jpg
+*.jpeg
+*.mp4
+*.webm
+!apps/**
+!packages/**
+!docs/**
+!assets/**
+packages/common/dist/**
+tsconfig.tsbuildinfo
+.serena/
+apps/android-observer-app/.gradle
+apps/android-observer-app/build/
