@@ -97,3 +97,24 @@ export function isAdminRequest(req) {
   const presented = bearerToken(req);
   return Boolean(presented) && (safeEqual(presented, getAdminToken()) || isValidAdminSession(presented));
 }
+
+/**
+ * True when the caller may read the merchant-private fields of a payment session.
+ *
+ * Requires proof of ownership: either the gateway's own admin/observer credential, or the
+ * owning merchant's webhook secret presented via `X-Merchant-Key` (which every merchant
+ * integration already holds). Without it, only the public view is returned, so a leaked or
+ * guessed payment id cannot be used to read internal status, verification internals,
+ * merchant metadata or the return URL.
+ */
+export function isPaymentOwner(req, session, ctx) {
+  if (isAdminRequest(req)) return true;
+  if (hasBearer(req, getObserverToken())) return true;
+
+  const presented = req.headers['x-merchant-key'];
+  if (!presented || typeof presented !== 'string' || !presented.trim()) return false;
+
+  const merchant = ctx.merchantRepo?.findById ? ctx.merchantRepo.findById(session.merchantId) : null;
+  if (!merchant?.webhookSecret) return false;
+  return safeEqual(presented.trim(), merchant.webhookSecret);
+}
