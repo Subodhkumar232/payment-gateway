@@ -41,13 +41,13 @@ export class WebhookEngine {
     // session row. Merchants need it to reconcile a webhook against their bank
     // statement, and it is part of the documented webhook contract.
     let utr = session.utr || session.bankReferenceNumber || session.bank_reference_number || '';
-    if (!utr && session.attributedObservationId) {
+    if (!utr && session.attributedObservationId && this.db) {
       try {
         const obsRow = this.db.queryOne(
           'SELECT bank_reference_number FROM payment_observations WHERE id = ?',
           [session.attributedObservationId]
         );
-        if (obsRow?.bank_reference_number) utr = obsRow.bank_reference_number;
+        if (obsRow?.bank_reference_number) utr = String(obsRow.bank_reference_number).trim();
       } catch {}
     }
 

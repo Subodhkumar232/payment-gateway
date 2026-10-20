@@ -227,8 +227,17 @@ export class ProcessManager extends EventEmitter {
    * Starts all managed services.
    */
   async startAll() {
+    const observerChannel = (process.env.YOUPI_OBSERVER_CHANNEL || 'ALL').toUpperCase();
     for (const svc of this.services) {
       if (svc.legacy && process.env.ENABLE_LEGACY_CHROME_OBSERVERS !== 'true') {
+        continue;
+      }
+      if (svc.id === 'gmail-observer' && observerChannel === 'SMS_ONLY') {
+        this.appendLog(svc.id, 'system', 'Skipping Gmail Observer (YOUPI_OBSERVER_CHANNEL=SMS_ONLY)');
+        continue;
+      }
+      if (svc.id === 'sms-observer' && observerChannel === 'GMAIL_ONLY') {
+        this.appendLog(svc.id, 'system', 'Skipping SMS Observer (YOUPI_OBSERVER_CHANNEL=GMAIL_ONLY)');
         continue;
       }
       try {

@@ -201,4 +201,62 @@ describe('Webhook Engine Integration Tests', () => {
     const updatedDelivery = db.queryOne('SELECT * FROM webhook_deliveries WHERE id = ?', [result.deliveryId]);
     assert.equal(updatedDelivery.is_successful, 1);
   });
+
+  test('propagates UTR correctly from session or attributed observation', async () => {
+    const merchant = merchantRepo.create({
+      businessName: 'UTR Test Store',
+      slug: 'utr-store-propagation',
+      contactEmail: 'utr@example.com',
+      contactPhone: '9876543210',
+      webhookUrl: `http://localhost:${receiverPort}/webhook-utr`,
+      webhookSecret: 'secret_utr_123'
+    });
+
+    // 1. Direct UTR on session
+    const sessionDirect = sessionRepo.create({
+      merchantId: merchant.id,
+      orderId: 'ORD-UTR-DIRECT',
+      amountPaise: 15000n
+    });
+    sessionDirect.utr = '123456789012';
+
+    receivedWebhooks = [];
+    shouldReceiverFail = false;
+
+    await webhookEngine.dispatch('SUCCESS', sessionDirect);
+    assert.equal(receivedWebhooks.length, 1);
+    assert.equal(receivedWebhooks[0].body.utr, '123456789012');
+
+    // 2. UTR resolved from attributed observation in database
+    const obsId = 'obs_test_999';
+    const accId = '00000000-0000-0000-0000-000000000002';
+    db.execute(`
+      INSERT INTO payment_observations (id, receiving_account_id, source, amount_paise, observed_at, bank_reference_number, fingerprint_hash)
+      VALUES (?, ?, 'SMS', 30000, datetime('now'), '987654321098', 'fingerprint_test_utr')
+    `, [obsId, accId]);
+
+    const sessionAttributed = sessionRepo.create({
+      merchantId: merchant.id,
+      orderId: 'ORD-UTR-ATTRIB',
+      amountPaise: 30000n
+    });
+    sessionAttributed.attributedObservationId = obsId;
+
+    receivedWebhooks = [];
+    await webhookEngine.dispatch('SUCCESS', sessionAttributed);
+    assert.equal(receivedWebhooks.length, 1);
+    assert.equal(receivedWebhooks[0].body.utr, '987654321098');
+
+    // 3. Missing / empty UTR falls back to null cleanly
+    const sessionMissing = sessionRepo.create({
+      merchantId: merchant.id,
+      orderId: 'ORD-UTR-NONE',
+      amountPaise: 10000n
+    });
+
+    receivedWebhooks = [];
+    await webhookEngine.dispatch('SUCCESS', sessionMissing);
+    assert.equal(receivedWebhooks.length, 1);
+    assert.ok(receivedWebhooks[0].body.utr === '' || receivedWebhooks[0].body.utr === null);
+  });
 });

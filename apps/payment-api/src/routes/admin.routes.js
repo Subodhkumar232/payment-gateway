@@ -261,6 +261,62 @@ export function registerAdminRoutes(server, ctx) {
     HttpServer.json(res, 200, { success: true, ticket });
   });
 
+  // POST /api/v1/admin/payments/:id/confirm (Manual reconciliation for payments pending verification)
+  server.post('/api/v1/admin/payments/:id/confirm', async (req, res, params) => {
+    const paymentId = params.id;
+    const body = await HttpServer.parseBody(req).catch(() => ({}));
+    const operatorId = body.operatorId || 'admin-operator';
+    const notes = body.notes || 'Manually reconciled by admin';
+
+    const session = ctx.sessionRepo.findById(paymentId);
+    if (!session) {
+      HttpServer.json(res, 404, { error: `Payment session not found: ${paymentId}` });
+      return;
+    }
+
+    if ([PaymentStatus.SUCCESS, PaymentStatus.FAILED, PaymentStatus.EXPIRED, PaymentStatus.CANCELLED].includes(session.status)) {
+      HttpServer.json(res, 409, { error: `Cannot confirm a payment in terminal status '${session.status}'.` });
+      return;
+    }
+
+    const updated = ctx.sessionRepo.transitionToTerminal(paymentId, PaymentStatus.SUCCESS);
+
+    if (ctx.auditRepo) {
+      ctx.auditRepo.log({
+        merchantId: session.merchantId,
+        entityType: 'PAYMENT_SESSION',
+        entityId: paymentId,
+        action: 'PAYMENT_MANUALLY_RECONCILED',
+        actorType: AuditActorType.ADMIN,
+        actorId: operatorId,
+        details: { operatorId, notes, previousStatus: session.status }
+      });
+    }
+
+    server.broadcastSse(paymentId, 'status_change', {
+      status: PaymentStatus.SUCCESS,
+      method: session.method,
+      orderId: session.orderId
+    });
+
+    if (ctx.eventEmitter) {
+      ctx.eventEmitter.emit('PAYMENT.SUCCESS', {
+        paymentId: updated.id,
+        orderId: session.orderId,
+        merchantId: session.merchantId,
+        amountPaise: session.amountPaise
+      });
+    }
+
+    HttpServer.json(res, 200, {
+      success: true,
+      confirmed: true,
+      paymentId,
+      status: PaymentStatus.SUCCESS,
+      reconciledBy: operatorId
+    });
+  });
+
   // POST /api/v1/admin/counter-confirm
   server.post('/api/v1/admin/counter-confirm', async (req, res) => {
     const body = await HttpServer.parseBody(req);

@@ -4,14 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HttpServer } from '../server.js';
 import { ObservationNormalizer, BankSmsParser, BankEmailParser, generateQrSvg } from '@youpi/core';
-import { toRupeesString, toPaise, verifyHmac, resolveRuntimeUrls, resolveSecret, safeEqual, hasBearer, getObserverToken } from '@youpi/common';
+import { toRupeesString, toPaise, verifyHmac, resolveRuntimeUrls, resolveSecret, safeEqual } from '@youpi/common';
 import { isAdminRequest } from '../auth-guard.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-/** Upper bound on a single bank notification body accepted by the verification pipeline. */
-const MAX_OBSERVATION_TEXT_CHARS = 64 * 1024;
 
 /**
  * Registers observation intake routes for SMS Gateway (Android Native Observer)
@@ -32,19 +29,92 @@ export function registerPollerRoutes(server, ctx) {
 
   // GET /api/v1/pollers/active-window (Enables deep intelligent DOM scanning for active amounts and dual-layer verification)
   server.get('/api/v1/pollers/active-window', async (req, res) => {
-    // Observer-only. This returns every in-flight session with its exact amount and VPA,
-    // which is precisely the oracle needed to craft a matching synthetic bank observation.
-    if (!isAdminRequest(req) && !hasBearer(req, getObserverToken())) {
-      HttpServer.json(res, 401, { error: 'Unauthorized', code: 'AUTH_REQUIRED' });
+    const deviceId = req.headers['x-device-id'];
+    let targetAccountId = null;
+    let targetMerchantId = null;
+
+    if (deviceId) {
+      // 1. Android Observer Device Authentication
+      const device = ctx.db.queryOne('SELECT * FROM android_devices WHERE id = ? AND is_active = 1', [deviceId]);
+      if (!device) {
+        HttpServer.json(res, 403, { error: 'Device not authorized or inactive.', code: 'DEVICE_UNAUTHORIZED' });
+        return;
+      }
+      targetMerchantId = device.merchant_id;
+      const activeAcc = ctx.accountRepo
+        ? ctx.accountRepo.findActiveForMerchant(device.merchant_id)
+        : ctx.db.queryOne('SELECT id FROM payment_receiving_accounts WHERE merchant_id = ? AND is_active = 1 LIMIT 1', [device.merchant_id]);
+
+      if (!activeAcc?.id) {
+        HttpServer.json(res, 403, { error: 'No active receiving account configured for authenticated observer device merchant.', code: 'NO_ACTIVE_ACCOUNT' });
+        return;
+      }
+      targetAccountId = activeAcc.id;
+
+      // Anti-spoofing: if requested a different receivingAccountId, forbid cross-account access
+      const requestedAccId = req.query?.receivingAccountId || req.headers['x-receiving-account-id'];
+      if (requestedAccId && requestedAccId !== targetAccountId) {
+        HttpServer.json(res, 403, { error: 'Cross-account access forbidden for authenticated observer device.', code: 'CROSS_ACCOUNT_FORBIDDEN' });
+        return;
+      }
+    } else if (isAdminRequest(req)) {
+      // 2. Admin Request with account/merchant override
+      targetAccountId = req.query?.receivingAccountId || req.headers['x-receiving-account-id'];
+      targetMerchantId = req.query?.merchantId || req.headers['x-merchant-id'];
+
+      if (!targetAccountId && targetMerchantId) {
+        const activeAcc = ctx.accountRepo
+          ? ctx.accountRepo.findActiveForMerchant(targetMerchantId)
+          : ctx.db.queryOne('SELECT id FROM payment_receiving_accounts WHERE merchant_id = ? AND is_active = 1 LIMIT 1', [targetMerchantId]);
+        targetAccountId = activeAcc?.id;
+      }
+      if (!targetAccountId) {
+        const anyActive = ctx.accountRepo
+          ? (ctx.accountRepo.listActive?.()[0] || ctx.accountRepo.findActiveForMerchant?.('00000000-0000-0000-0000-000000000001'))
+          : ctx.db.queryOne('SELECT id FROM payment_receiving_accounts WHERE is_active = 1 LIMIT 1');
+        targetAccountId = anyActive?.id;
+      }
+    } else {
+      // 3. Token-based Observer (OBSERVER_API_TOKEN)
+      targetAccountId = req.query?.receivingAccountId || req.headers['x-receiving-account-id'];
+      targetMerchantId = req.query?.merchantId || req.headers['x-merchant-id'];
+
+      if (!targetAccountId) {
+        HttpServer.json(res, 400, { error: 'Missing mandatory receivingAccountId or X-Receiving-Account-Id header.', code: 'ACCOUNT_BINDING_REQUIRED' });
+        return;
+      }
+
+      const receivingAccount = ctx.accountRepo
+        ? ctx.accountRepo.findById(targetAccountId)
+        : ctx.db.queryOne('SELECT id, merchant_id, is_active FROM payment_receiving_accounts WHERE id = ?', [targetAccountId]);
+
+      if (!receivingAccount || (receivingAccount.isActive === false || receivingAccount.is_active === 0)) {
+        HttpServer.json(res, 403, { error: 'Invalid or inactive receiving account.', code: 'INVALID_RECEIVING_ACCOUNT' });
+        return;
+      }
+
+      if (targetMerchantId) {
+        const accMerchantId = receivingAccount.merchantId || receivingAccount.merchant_id;
+        if (accMerchantId && accMerchantId !== targetMerchantId) {
+          HttpServer.json(res, 403, { error: 'Account binding does not match merchant context.', code: 'MERCHANT_ACCOUNT_MISMATCH' });
+          return;
+        }
+      }
+    }
+
+    if (!targetAccountId) {
+      HttpServer.json(res, 403, { error: 'Unable to resolve authorized receiving account scope.', code: 'UNAUTHORIZED_SCOPE' });
       return;
     }
+
     const activeSessions = ctx.db.query(`
       SELECT id, order_id, receiving_account_id, amount_paise, status, verification_level, expires_at, processing_expires_at, completed_at
       FROM payment_sessions
-      WHERE status IN ('ACTIVE', 'PROCESSING')
-         OR (status = 'SUCCESS' AND verification_level < 2 AND completed_at >= datetime('now', '-60 seconds'))
+      WHERE receiving_account_id = ?
+        AND (status IN ('ACTIVE', 'PROCESSING')
+             OR (status = 'SUCCESS' AND verification_level < 2 AND completed_at >= datetime('now', '-60 seconds')))
       ORDER BY created_at DESC
-    `);
+    `, [targetAccountId]);
 
     const sessions = activeSessions.map(s => ({
       id: s.id,
@@ -60,6 +130,7 @@ export function registerPollerRoutes(server, ctx) {
 
     HttpServer.json(res, 200, {
       hasActivePayment: sessions.length > 0,
+      receivingAccountId: targetAccountId,
       sessions
     });
   });
@@ -73,16 +144,42 @@ export function registerPollerRoutes(server, ctx) {
       return;
     }
 
+    const receivingAccount = ctx.accountRepo
+      ? ctx.accountRepo.findById(body.receivingAccountId)
+      : ctx.db.queryOne('SELECT id, merchant_id, is_active FROM payment_receiving_accounts WHERE id = ?', [body.receivingAccountId]);
+    if (!receivingAccount || (receivingAccount.isActive === false || receivingAccount.is_active === 0)) {
+      HttpServer.json(res, 400, { error: 'Invalid or inactive receivingAccountId.' });
+      return;
+    }
+
+    // Verify authenticated device registration binding if device header/body supplied
+    const deviceId = req.headers['x-device-id'] || body.deviceId;
+    if (deviceId) {
+      const device = ctx.db.queryOne('SELECT * FROM android_devices WHERE id = ? AND is_active = 1', [deviceId]);
+      if (!device) {
+        HttpServer.json(res, 403, { error: 'Device not authorized or inactive.', code: 'DEVICE_UNAUTHORIZED' });
+        return;
+      }
+      const accMerchantId = receivingAccount.merchantId || receivingAccount.merchant_id;
+      if (accMerchantId && accMerchantId !== device.merchant_id) {
+        HttpServer.json(res, 403, { error: 'Device registration does not match target receiving account merchant.', code: 'CROSS_ACCOUNT_FORBIDDEN' });
+        return;
+      }
+    }
+
+    // Verify merchant context binding if supplied
+    const targetMerchantId = req.headers['x-merchant-id'] || body.merchantId;
+    if (targetMerchantId) {
+      const accMerchantId = receivingAccount.merchantId || receivingAccount.merchant_id;
+      if (accMerchantId && accMerchantId !== targetMerchantId) {
+        HttpServer.json(res, 403, { error: 'Account binding does not match merchant context.', code: 'MERCHANT_ACCOUNT_MISMATCH' });
+        return;
+      }
+    }
+
     // Evaluate through Security & Fraud Verification Pipeline
     const rawText = body.rawText || body.text || body.message || body.sms || body.body || (typeof body.rawPayload === 'string' ? body.rawPayload : (body.rawPayload?.text || body.rawPayload?.body));
     const sender = body.sender || body.from || body.rawPayload?.sender || body.rawPayload?.from;
-
-    // Bank notifications are small. Reject oversized bodies outright so no single observation
-    // can be used to burn CPU or memory on the verification path.
-    if (typeof rawText === 'string' && rawText.length > MAX_OBSERVATION_TEXT_CHARS) {
-      HttpServer.json(res, 413, { error: `Observation body too large (max ${MAX_OBSERVATION_TEXT_CHARS} characters).` });
-      return;
-    }
 
     if (ctx.pipeline && rawText) {
       const pipeResult = ctx.pipeline.process({
@@ -97,14 +194,17 @@ export function registerPollerRoutes(server, ctx) {
         testModeActive: Boolean(body.testModeActive) && isAdminRequest(req)
       });
 
-      if (pipeResult.status === 'REJECTED' && pipeResult.failingCondition === 'FRAUDULENT_PAYMENT_INJECTION') {
-        HttpServer.json(res, 403, {
+      if (pipeResult.status === 'REJECTED') {
+        const isFraud = pipeResult.failingCondition === 'FRAUDULENT_PAYMENT_INJECTION';
+        HttpServer.json(res, isFraud ? 403 : 400, {
           accepted: false,
           status: 'REJECTED',
-          reason: 'FRAUDULENT_PAYMENT_INJECTION',
-          threatDetected: true,
-          banned: true,
-          error: 'FRAUDULENT_PAYMENT_INJECTION: Positive identification of fake payment message. Customer account banned and session terminated.'
+          reason: pipeResult.failingCondition || pipeResult.reason || 'VERIFICATION_FAILED',
+          details: pipeResult.details || 'Message failed verification pipeline rules.',
+          threatDetected: isFraud,
+          banned: isFraud,
+          error: isFraud ? 'FRAUDULENT_PAYMENT_INJECTION: Positive identification of fake payment message. Customer account banned and session terminated.' : undefined,
+          pipeline: pipeResult
         });
         return;
       }
@@ -288,14 +388,16 @@ export function registerPollerRoutes(server, ctx) {
       }
     }
 
-    // Resolve Receiving Account for this merchant
-    let receivingAccountId = body.receivingAccountId;
-    if (!receivingAccountId) {
-      const activeAccount = ctx.accountRepo
-        ? ctx.accountRepo.findActiveForMerchant(device.merchant_id)
-        : ctx.db.queryOne('SELECT id FROM payment_receiving_accounts WHERE merchant_id = ? AND is_active = 1 LIMIT 1', [device.merchant_id]);
-      receivingAccountId = activeAccount?.id || '00000000-0000-0000-0000-000000000002';
+    // Resolve Receiving Account strictly from trusted device merchant registration
+    const activeAccount = ctx.accountRepo
+      ? ctx.accountRepo.findActiveForMerchant(device.merchant_id)
+      : ctx.db.queryOne('SELECT id FROM payment_receiving_accounts WHERE merchant_id = ? AND is_active = 1 LIMIT 1', [device.merchant_id]);
+
+    if (!activeAccount?.id) {
+      HttpServer.json(res, 400, { error: 'No active receiving account configured for authenticated observer device merchant.' });
+      return;
     }
+    const receivingAccountId = activeAccount.id;
 
     // Extract amount and details: either pre-parsed or from raw bank SMS
     let amountPaise = body.amountPaise ? BigInt(body.amountPaise) : undefined;

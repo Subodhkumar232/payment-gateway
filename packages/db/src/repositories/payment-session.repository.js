@@ -86,7 +86,12 @@ export class PaymentSessionRepository {
    * If slot is occupied, session transitions to QUEUED with sequence position.
    */
   acquireSlotAtomic(sessionId, receivingAccountId, durationMs = 300000) {
-    return this.db.transaction(() => {
+    if (!receivingAccountId) {
+      throw new Error('receivingAccountId is mandatory for acquiring an active payment slot');
+    }
+
+    const runAcquisition = () => {
+      return this.db.transaction(() => {
       const now = new Date();
       const nowIso = now.toISOString();
 
@@ -135,24 +140,35 @@ export class PaymentSessionRepository {
 
         const expiresAt = new Date(now.getTime() + durationMs).toISOString();
 
-        this.db.execute(`
-          UPDATE payment_sessions
-          SET status = ?, slot_acquired_at = ?, expires_at = ?, queue_position = 0, updated_at = ?
-          WHERE id = ?
-        `, [PaymentStatus.ACTIVE, nowIso, expiresAt, nowIso, sessionId]);
+        try {
+          this.db.execute(`
+            UPDATE payment_sessions
+            SET status = ?, slot_acquired_at = ?, expires_at = ?, queue_position = 0, updated_at = ?
+            WHERE id = ?
+          `, [PaymentStatus.ACTIVE, nowIso, expiresAt, nowIso, sessionId]);
 
-        // Mark receiving account as busy
-        this.db.execute(`
-          UPDATE payment_receiving_accounts
-          SET is_slot_busy = 1, current_active_session_id = ?, updated_at = ?
-          WHERE id = ?
-        `, [sessionId, nowIso, receivingAccountId]);
+          // Mark receiving account as busy
+          this.db.execute(`
+            UPDATE payment_receiving_accounts
+            SET is_slot_busy = 1, current_active_session_id = ?, updated_at = ?
+            WHERE id = ?
+          `, [sessionId, nowIso, receivingAccountId]);
 
-        return {
-          status: PaymentStatus.ACTIVE,
-          queuePosition: 0,
-          expiresAt: new Date(expiresAt)
-        };
+          return {
+            status: PaymentStatus.ACTIVE,
+            queuePosition: 0,
+            expiresAt: new Date(expiresAt)
+          };
+        } catch (slotErr) {
+          if (slotErr.message && (slotErr.message.includes('idx_one_slot_per_receiving_account') || slotErr.message.includes('idx_single_active_session') || slotErr.message.includes('UNIQUE constraint failed'))) {
+            activeRow = this.db.queryOne(`
+              SELECT id, status, expires_at FROM payment_sessions
+              WHERE receiving_account_id = ? AND status IN (?, ?) LIMIT 1
+            `, [receivingAccountId, PaymentStatus.ACTIVE, PaymentStatus.PROCESSING]);
+          } else {
+            throw slotErr;
+          }
+        }
       } else {
         // Slot is busy! Place in QUEUED
         const existingSession = this.findById(sessionId);
@@ -167,7 +183,7 @@ export class PaymentSessionRepository {
           queuePosition = posRow ? posRow.next_pos : 1;
         }
 
-        if (existingSession && !isValidTransition(existingSession.status, PaymentStatus.QUEUED)) {
+        if (existingSession && existingSession.status !== PaymentStatus.QUEUED && !isValidTransition(existingSession.status, PaymentStatus.QUEUED)) {
           throw new Error(`Illegal payment state transition: cannot move from '${existingSession.status}' to 'QUEUED'.`);
         }
 
@@ -183,8 +199,13 @@ export class PaymentSessionRepository {
           expiresAt: null
         };
       }
-    });
-  }
+    }, { mode: 'IMMEDIATE' });
+  };
+
+  return typeof this.db.withRetry === 'function'
+    ? this.db.withRetry(runAcquisition)
+    : runAcquisition();
+}
 
   /**
    * Transitions an ACTIVE session to PROCESSING upon customer clicking Payment Done.
@@ -257,6 +278,12 @@ export class PaymentSessionRepository {
       }
       if (options.reason) {
         metadata = { ...metadata, cancelledReason: options.reason };
+      }
+      if (options.replacedByDeviceId) {
+        metadata = { ...metadata, replacedByDeviceId: options.replacedByDeviceId };
+      }
+      if (options.replacedBySessionId) {
+        metadata = { ...metadata, replacedBySessionId: options.replacedBySessionId };
       }
       if (options.replacedByDeviceId) {
         metadata = { ...metadata, replacedByDeviceId: options.replacedByDeviceId };
