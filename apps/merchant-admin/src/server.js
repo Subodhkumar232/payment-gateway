@@ -21,16 +21,34 @@ const BASE_SECURITY_HEADERS = Object.freeze({
 });
 
 /**
+ * Extracts admin token from Bearer header, cookie, or query parameter.
+ */
+function getAuthTokenFromReq(req, url) {
+  let token = '';
+  const match = /^Bearer\s+(.+)$/i.exec(req.headers?.['authorization'] || '');
+  if (match) token = match[1].trim();
+  if (!token && req.headers?.cookie) {
+    const cookieMatch = /(?:^|;\s*)youpi_admin_token=([^;]+)/.exec(req.headers.cookie);
+    if (cookieMatch) {
+      try {
+        token = decodeURIComponent(cookieMatch[1].trim());
+      } catch {
+        token = cookieMatch[1].trim();
+      }
+    }
+  }
+  if (!token && url && typeof url.searchParams?.get === 'function') {
+    token = (url.searchParams.get('token') || '').trim();
+  }
+  return token;
+}
+
+/**
  * Validates whether the caller presented a valid admin credential:
  * Either the master machine token, or an unexpired database-backed session token.
  */
 function checkAdminToken(req, url, adminUserRepo) {
-  let token = '';
-  const match = /^Bearer\s+(.+)$/i.exec(req.headers?.['authorization'] || '');
-  if (match) token = match[1].trim();
-  if (!token && url && typeof url.searchParams?.get === 'function') {
-    token = (url.searchParams.get('token') || '').trim();
-  }
+  const token = getAuthTokenFromReq(req, url);
   if (!token) return false;
 
   // 1. Static Master Token check
@@ -89,6 +107,10 @@ export class AdminServer {
     this.adminUserRepo = new AdminUserRepository(this.db);
     this.htmlTemplatePath = path.join(__dirname, 'views', 'admin.html');
     this.template = fs.readFileSync(this.htmlTemplatePath, 'utf8');
+    this.loginTemplatePath = path.join(__dirname, 'views', 'login.html');
+    this.loginTemplate = fs.existsSync(this.loginTemplatePath)
+      ? fs.readFileSync(this.loginTemplatePath, 'utf8')
+      : '';
   }
 
   rebuildJsxIfNeeded() {
@@ -155,6 +177,19 @@ export class AdminServer {
           }
         });
 
+        
+        // 3. Login SSR Bundle
+        const ssrLoginBundle = path.resolve(__dirname, '../public/js/login.ssr.cjs');
+        esbuild.buildSync({
+          entryPoints: [path.join(viewsDir, 'LoginPage.jsx')],
+          bundle: true,
+          outfile: ssrLoginBundle,
+          format: 'cjs',
+          target: ['node18'],
+          define: {
+            'process.env.NODE_ENV': '"production"'
+          }
+        });
         console.log('[AdminServer] Auto-recompiled React JSX components on demand.');
       }
     } catch (err) {
@@ -280,6 +315,33 @@ export class AdminServer {
     return html;
   }
 
+  renderLoginHtml() {
+    this.rebuildJsxIfNeeded();
+    try {
+      if (fs.existsSync(this.loginTemplatePath)) {
+        this.loginTemplate = fs.readFileSync(this.loginTemplatePath, 'utf8');
+      }
+    } catch {}
+
+    let html = this.loginTemplate;
+    const ssrLoginBundle = path.resolve(__dirname, '../public/js/login.ssr.cjs');
+    if (html.includes('<!-- SSR_LOGIN_ROOT -->')) {
+      let ssrMarkup = '';
+      if (fs.existsSync(ssrLoginBundle)) {
+        try {
+          const resolvedPath = path.resolve(ssrLoginBundle);
+          delete require.cache[resolvedPath];
+          const LoginPage = require(resolvedPath).default || require(resolvedPath);
+          ssrMarkup = ReactDOMServer.renderToString(React.createElement(LoginPage));
+        } catch (err) {
+          console.warn('[AdminServer] SSR Login rendering error, falling back to client-side mount:', err.message);
+        }
+      }
+      html = html.replace('<!-- SSR_LOGIN_ROOT -->', ssrMarkup);
+    }
+    return html;
+  }
+
   createServer() {
     return http.createServer(async (req, res) => {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -354,7 +416,9 @@ export class AdminServer {
                 userAgent
               });
 
+              const sessionCookie = `youpi_admin_token=${encodeURIComponent(session.token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${ttlHours * 3600}`;
               res.writeHead(200, {
+                'Set-Cookie': sessionCookie,
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*',
                 ...BASE_SECURITY_HEADERS
@@ -397,17 +461,14 @@ export class AdminServer {
 
       // Admin Auth Logout: POST or GET /api/admin/auth/logout
       if (pathname === '/api/admin/auth/logout') {
-        let token = '';
-        const match = /^Bearer\s+(.+)$/i.exec(req.headers?.['authorization'] || '');
-        if (match) token = match[1].trim();
-        if (!token && url && typeof url.searchParams?.get === 'function') {
-          token = (url.searchParams.get('token') || '').trim();
-        }
+        const token = getAuthTokenFromReq(req, url);
         if (token && this.adminUserRepo) {
           this.adminUserRepo.revokeSession(token);
         }
+        const clearCookie = 'youpi_admin_token=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT';
         res.writeHead(200, {
           'Content-Type': 'application/json',
+          'Set-Cookie': clearCookie,
           'Access-Control-Allow-Origin': '*',
           ...BASE_SECURITY_HEADERS
         });
@@ -415,9 +476,26 @@ export class AdminServer {
         return;
       }
 
+      // Logout Redirect: GET /logout
+      if (pathname === '/logout') {
+        const token = getAuthTokenFromReq(req, url);
+        if (token && this.adminUserRepo) {
+          this.adminUserRepo.revokeSession(token);
+        }
+        const clearCookie = 'youpi_admin_token=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT';
+        res.writeHead(302, {
+          'Location': '/login',
+          'Set-Cookie': clearCookie,
+          ...BASE_SECURITY_HEADERS
+        });
+        res.end();
+        return;
+      }
+
       // Admin Auth Verification: POST or GET /api/admin/auth/verify
       if (pathname === '/api/admin/auth/verify') {
-        if (!hasAdminToken(req, url, this.adminUserRepo)) {
+        const token = getAuthTokenFromReq(req, url);
+        if (!token || !checkAdminToken(req, url, this.adminUserRepo)) {
           res.writeHead(401, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*',
@@ -426,12 +504,23 @@ export class AdminServer {
           res.end(JSON.stringify({ error: 'Unauthorized', code: 'AUTH_REQUIRED' }));
           return;
         }
+
+        let user = { username: 'admin' };
+        if (this.adminUserRepo && token) {
+          try {
+            const session = this.adminUserRepo.validateSession(token);
+            if (session && session.user) {
+              user = session.user;
+            }
+          } catch {}
+        }
+
         res.writeHead(200, {
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*',
           ...BASE_SECURITY_HEADERS
         });
-        res.end(JSON.stringify({ success: true, authenticated: true }));
+        res.end(JSON.stringify({ success: true, authenticated: true, token, user }));
         return;
       }
 
@@ -606,8 +695,39 @@ export class AdminServer {
         }
       }
 
+      // Dedicated Login Page: GET /login
+      if (pathname === '/login') {
+        if (hasAdminToken(req, url, this.adminUserRepo)) {
+          res.writeHead(302, {
+            'Location': '/',
+            ...BASE_SECURITY_HEADERS
+          });
+          res.end();
+          return;
+        }
+
+        const loginHtml = this.renderLoginHtml();
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache',
+          ...BASE_SECURITY_HEADERS
+        });
+        res.end(loginHtml);
+        return;
+      }
+
       // Dashboard View: GET / or GET /admin
       if (pathname === '/' || pathname === '/admin') {
+        // Server-side Authentication Middleware
+        if (!hasAdminToken(req, url, this.adminUserRepo)) {
+          res.writeHead(302, {
+            'Location': '/login',
+            ...BASE_SECURITY_HEADERS
+          });
+          res.end();
+          return;
+        }
+
         const html = this.renderHtml();
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',

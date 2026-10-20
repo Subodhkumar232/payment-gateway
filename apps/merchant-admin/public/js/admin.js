@@ -3,8 +3,8 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
 function getAdminAuthToken() {
   if (typeof window === 'undefined') return '';
   try {
-    const token = sessionStorage.getItem('youpi_admin_token') || (typeof window.ADMIN_TOKEN === 'string' ? window.ADMIN_TOKEN : '') || '';
-    const expiry = sessionStorage.getItem('youpi_admin_token_expiry');
+    const token = localStorage.getItem('youpi_admin_token') || sessionStorage.getItem('youpi_admin_token') || (typeof window.ADMIN_TOKEN === 'string' ? window.ADMIN_TOKEN : '') || '';
+    const expiry = localStorage.getItem('youpi_admin_token_expiry') || sessionStorage.getItem('youpi_admin_token_expiry');
     if (token && expiry) {
       if (Date.now() > new Date(expiry).getTime()) {
         clearAdminAuthToken();
@@ -20,8 +20,10 @@ function getAdminAuthToken() {
 function setAdminAuthToken(token, expiresAt = null) {
   if (typeof window === 'undefined') return;
   try {
+    localStorage.setItem('youpi_admin_token', token);
     sessionStorage.setItem('youpi_admin_token', token);
     if (expiresAt) {
+      localStorage.setItem('youpi_admin_token_expiry', expiresAt);
       sessionStorage.setItem('youpi_admin_token_expiry', expiresAt);
     }
   } catch (e) {}
@@ -30,6 +32,9 @@ function setAdminAuthToken(token, expiresAt = null) {
 function clearAdminAuthToken() {
   if (typeof window === 'undefined') return;
   try {
+    localStorage.removeItem('youpi_admin_token');
+    localStorage.removeItem('youpi_admin_token_expiry');
+    localStorage.removeItem('youpi_admin_user');
     sessionStorage.removeItem('youpi_admin_token');
     sessionStorage.removeItem('youpi_admin_token_expiry');
     sessionStorage.removeItem('youpi_admin_user');
@@ -44,7 +49,7 @@ function updateAdminAuthUi() {
   const actionText = document.getElementById('adminAuthActionText');
   let savedUser = '';
   try {
-    savedUser = sessionStorage.getItem('youpi_admin_user') || '';
+    savedUser = localStorage.getItem('youpi_admin_user') || sessionStorage.getItem('youpi_admin_user') || '';
   } catch(e) {}
 
   if (token) {
@@ -55,191 +60,45 @@ function updateAdminAuthUi() {
       actionBtn.className = 'text-[0.7rem] text-red-500 hover:text-red-600 font-bold hover:underline cursor-pointer flex items-center gap-1 shrink-0';
     }
   } else {
-    if (userBadge) userBadge.textContent = 'Locked';
-    if (actionIcon) actionIcon.textContent = '🔐';
-    if (actionText) actionText.textContent = 'Sign In';
+    if (userBadge) userBadge.textContent = savedUser || 'Admin';
+    if (actionIcon) actionIcon.textContent = '🔒';
+    if (actionText) actionText.textContent = 'Sign Out';
     if (actionBtn) {
-      actionBtn.className = 'text-[0.7rem] text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer flex items-center gap-1 shrink-0';
+      actionBtn.className = 'text-[0.7rem] text-red-500 hover:text-red-600 font-bold hover:underline cursor-pointer flex items-center gap-1 shrink-0';
     }
   }
 }
 
-let authPromptPromise = null;
-
-function promptAdminAuth(errorMessage = '') {
-  if (typeof document === 'undefined') return Promise.resolve('');
-  const modal = document.getElementById('adminAuthModal');
-  const errorBox = document.getElementById('adminAuthError');
-  const usernameInput = document.getElementById('adminAuthUsername');
-  const passwordInput = document.getElementById('adminAuthPassword');
-  const tokenInput = document.getElementById('adminAuthTokenInput');
-
-  if (modal) {
-    modal.classList.add('is-open');
-    modal.removeAttribute('hidden');
-    modal.style.setProperty('display', 'flex', 'important');
-    modal.style.setProperty('visibility', 'visible', 'important');
-    modal.style.setProperty('opacity', '1', 'important');
-    modal.style.setProperty('z-index', '2147483647', 'important');
-
-    if (errorBox) {
-      if (errorMessage) {
-        errorBox.textContent = errorMessage;
-        errorBox.removeAttribute('hidden');
-        errorBox.style.setProperty('display', 'block', 'important');
-      } else {
-        errorBox.setAttribute('hidden', '');
-        errorBox.style.setProperty('display', 'none', 'important');
-        errorBox.textContent = '';
-      }
-    }
-    if (passwordInput) passwordInput.value = '';
-    if (tokenInput) tokenInput.value = '';
-    if (usernameInput) {
-      if (!usernameInput.value) {
-        try {
-          usernameInput.value = sessionStorage.getItem('youpi_admin_user') || 'admin';
-        } catch(e) {
-          usernameInput.value = 'admin';
-        }
-      }
-      setTimeout(() => {
-        if (usernameInput.value && passwordInput) {
-          passwordInput.focus();
-        } else if (usernameInput) {
-          usernameInput.focus();
-        }
-      }, 50);
-    }
+function promptAdminAuth() {
+  if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+    window.location.href = '/login';
   }
-
-  if (authPromptPromise) return authPromptPromise;
-
-  authPromptPromise = new Promise((resolve) => {
-    window._resolveAdminAuth = (token) => {
-      if (modal) {
-        modal.classList.remove('is-open');
-        modal.setAttribute('hidden', '');
-        modal.style.setProperty('display', 'none', 'important');
-      }
-      authPromptPromise = null;
-      resolve(token);
-    };
-  });
-
-  return authPromptPromise;
+  return Promise.resolve('');
 }
 
 function closeAdminAuthModal() {
-  const modal = document.getElementById('adminAuthModal');
-  if (modal) {
-    modal.classList.remove('is-open');
-    modal.setAttribute('hidden', '');
-    modal.style.setProperty('display', 'none', 'important');
-  }
-  if (window._resolveAdminAuth) {
-    window._resolveAdminAuth('');
-  }
+  // Modal replaced by dedicated /login page
 }
 
 async function handleAdminAuthSubmit(e) {
-  if (e && e.preventDefault) e.preventDefault();
-  const usernameInput = document.getElementById('adminAuthUsername');
-  const passwordInput = document.getElementById('adminAuthPassword');
-  const tokenInput = document.getElementById('adminAuthTokenInput');
-  const errorBox = document.getElementById('adminAuthError');
-  const submitBtn = document.getElementById('adminAuthSubmitBtn');
-
-  const username = (usernameInput?.value || '').trim();
-  const password = (passwordInput?.value || tokenInput?.value || '').trim();
-
-  if (!username && !password) {
-    if (errorBox) {
-      errorBox.textContent = 'Please enter your Login ID and Password.';
-      errorBox.removeAttribute('hidden');
-      errorBox.style.setProperty('display', 'block', 'important');
-    }
-    return;
-  }
-
-  if (submitBtn) {
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Authenticating...';
-  }
-
-  try {
-    const res = await _origFetch('/api/admin/auth/login', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ username, password })
-    });
-
-    const data = await res.json().catch(() => ({}));
-
-    if (res.ok && data.success && data.token) {
-      setAdminAuthToken(data.token, data.expiresAt);
-      if (data.user?.username) {
-        try {
-          sessionStorage.setItem('youpi_admin_user', data.user.username);
-        } catch (e) {}
-      }
-      if (errorBox) {
-        errorBox.setAttribute('hidden', '');
-        errorBox.style.setProperty('display', 'none', 'important');
-        errorBox.textContent = '';
-      }
-      if (window._resolveAdminAuth) {
-        window._resolveAdminAuth(data.token);
-      } else {
-        const modal = document.getElementById('adminAuthModal');
-        if (modal) {
-          modal.classList.remove('is-open');
-          modal.setAttribute('hidden', '');
-          modal.style.setProperty('display', 'none', 'important');
-        }
-      }
-      updateAdminAuthUi();
-      showAdminToast(`🛡️ Welcome, ${data.user?.username || 'Admin'}! Authenticated successfully.`);
-      if (typeof window.startAdminSyncEngines === 'function') {
-        window.startAdminSyncEngines();
-      }
-      if (typeof window.switchSection === 'function') {
-        window.switchSection(activeSection || 'operations');
-      } else {
-        fetchLiveData();
-        fetchGatewaySettings();
-      }
-    } else {
-      if (errorBox) {
-        errorBox.textContent = data.error || 'Authentication failed: Invalid credentials.';
-        errorBox.removeAttribute('hidden');
-        errorBox.style.setProperty('display', 'block', 'important');
-      }
-    }
-  } catch (err) {
-    if (errorBox) {
-      errorBox.textContent = 'Verification error: ' + (err.message || 'Cannot reach server');
-      errorBox.removeAttribute('hidden');
-      errorBox.style.setProperty('display', 'block', 'important');
-    }
-  } finally {
-    if (submitBtn) {
-      submitBtn.disabled = false;
-      submitBtn.textContent = '🔐 Sign In to Merchant Portal';
-    }
-  }
+  // Modal replaced by dedicated /login page
 }
 
-function lockAdminSession() {
-  clearAdminAuthToken();
+async function lockAdminSession() {
+  const token = getAdminAuthToken();
   try {
-    sessionStorage.removeItem('youpi_admin_user');
-  } catch(e) {}
+    if (_origFetch) {
+      _origFetch('/api/admin/auth/logout', {
+        method: 'POST',
+        headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+      }).catch(() => {});
+    }
+  } catch (e) {}
+  clearAdminAuthToken();
   updateAdminAuthUi();
-  showAdminToast('Dashboard locked. Session cleared.');
-  setTimeout(() => window.location.reload(), 250);
+  if (typeof window !== 'undefined') {
+    window.location.href = '/login';
+  }
 }
 
 let _origFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : null;
@@ -249,7 +108,7 @@ if (typeof window !== 'undefined' && _origFetch) {
     init.headers = init.headers ? (init.headers instanceof Headers ? new Headers(init.headers) : { ...init.headers }) : {};
 
     const url = typeof input === 'string' ? input : (input && input.url) || '';
-    const isProtected = /^\/api\/v1\/admin(\/|$)/.test(url) || /^\/api\/services(\/|$)/.test(url) || /^\/api\/admin(\/|$)/.test(url) || url.includes('/api/v1/admin/');
+    const isProtected = /^\/api\/v1\/admin(\/$)/.test(url) || /^\/api\/services(\/$)/.test(url) || /^\/api\/admin(\/$)/.test(url) || url.includes('/api/v1/admin/');
 
     if (url.includes('/api/admin/auth/')) {
       return _origFetch(input, init);
@@ -257,11 +116,6 @@ if (typeof window !== 'undefined' && _origFetch) {
 
     if (isProtected) {
       let token = getAdminAuthToken();
-      if (!token) {
-        await promptAdminAuth();
-        token = getAdminAuthToken();
-      }
-
       if (token) {
         if (init.headers instanceof Headers) {
           if (!init.headers.has('Authorization')) init.headers.set('Authorization', 'Bearer ' + token);
@@ -271,20 +125,16 @@ if (typeof window !== 'undefined' && _origFetch) {
           }
         }
       }
+      if (!init.credentials) {
+        init.credentials = 'same-origin';
+      }
 
       let res = await _origFetch(input, init);
-      if (res.status === 401 && isProtected && token) {
+      if (res.status === 401 && isProtected) {
         clearAdminAuthToken();
         updateAdminAuthUi();
-        await promptAdminAuth('Session expired or invalid credentials. Please sign in.');
-        token = getAdminAuthToken();
-        if (token) {
-          if (init.headers instanceof Headers) {
-            init.headers.set('Authorization', 'Bearer ' + token);
-          } else {
-            init.headers['Authorization'] = 'Bearer ' + token;
-          }
-          res = await _origFetch(input, init);
+        if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+          window.location.href = '/login';
         }
       }
       return res;
@@ -4134,5 +3984,25 @@ if (typeof window !== 'undefined' && _origFetch) {
     if (existingToken) {
       startAdminSyncEngines();
     } else {
-      promptAdminAuth();
+      // Non-intrusive cookie verification: check if authenticated session exists in browser cookies
+      _origFetch('/api/admin/auth/verify', { credentials: 'same-origin' }).then(async (res) => {
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data.token) {
+            setAdminAuthToken(data.token);
+          }
+          if (data.user?.username) {
+            try {
+              localStorage.setItem('youpi_admin_user', data.user.username);
+              sessionStorage.setItem('youpi_admin_user', data.user.username);
+            } catch(e) {}
+          }
+          updateAdminAuthUi();
+          startAdminSyncEngines();
+        } else if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+      }).catch(() => {
+        // Tolerant on initial network failure
+      });
     }

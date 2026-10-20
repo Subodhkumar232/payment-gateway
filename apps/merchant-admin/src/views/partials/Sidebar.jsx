@@ -119,26 +119,26 @@ export default function Sidebar() {
         <div className="flex items-center justify-between p-2 rounded-lg text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-1.5 truncate">
             <span className="text-[0.65rem] text-slate-400 font-extrabold uppercase">User:</span>
-            <span id="adminUserBadge" className="font-mono text-slate-700 dark:text-slate-300 font-bold truncate max-w-[90px]">Locked</span>
+            <span id="adminUserBadge" className="font-mono text-slate-700 dark:text-slate-300 font-bold truncate max-w-[90px]">Admin</span>
           </div>
           <button
             id="adminAuthActionBtn"
-            className="text-[0.7rem] text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer flex items-center gap-1 shrink-0"
+            className="text-[0.7rem] text-red-500 hover:text-red-600 font-bold hover:underline cursor-pointer flex items-center gap-1 shrink-0"
             onClick={(e) => {
               try {
-                if (typeof window !== 'undefined') {
-                  if (typeof window.getAdminAuthToken === 'function' && window.getAdminAuthToken()) {
-                    window.lockAdminSession();
-                  } else if (typeof window.promptAdminAuth === 'function') {
-                    window.promptAdminAuth();
-                  }
+                if (typeof window !== 'undefined' && typeof window.lockAdminSession === 'function') {
+                  window.lockAdminSession();
+                } else {
+                  window.location.href = '/logout';
                 }
-              } catch(err) { console.error(err); }
+              } catch(err) {
+                window.location.href = '/logout';
+              }
             }}
-            title="Session Authentication"
+            title="Sign Out of Session"
           >
-            <span id="adminAuthActionIcon">🔐</span>
-            <span id="adminAuthActionText">Sign In</span>
+            <span id="adminAuthActionIcon">🔒</span>
+            <span id="adminAuthActionText">Sign Out</span>
           </button>
         </div>
       </div>
