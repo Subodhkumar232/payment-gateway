@@ -1,5 +1,5 @@
 import { HttpServer } from '../server.js';
-import { toPaise, toRupeesString, resolveRuntimeUrls, PaymentStatus } from '@youpi/common';
+import { toPaise, toRupeesString, resolveRuntimeUrls, PaymentStatus, evaluateCanaryMerchantEligibility } from '@youpi/common';
 import { isTerminalStatus, toPublicOutcome } from '@youpi/core';
 import { isPaymentOwner } from '../auth-guard.js';
 
@@ -43,6 +43,18 @@ export function registerPaymentRoutes(server, ctx) {
 
     if (!merchant) {
       HttpServer.json(res, 400, { error: 'Merchant not found or not configured.' });
+      return;
+    }
+
+    // Centralized fail-closed canary merchant eligibility check
+    const canaryCheck = evaluateCanaryMerchantEligibility(merchant, {
+      requestedAgencyVvisaUid: body.metadata?.agencyVvisaUid
+    });
+    if (!canaryCheck.allowed) {
+      HttpServer.json(res, canaryCheck.statusCode || 403, {
+        error: canaryCheck.error,
+        code: canaryCheck.code
+      });
       return;
     }
 

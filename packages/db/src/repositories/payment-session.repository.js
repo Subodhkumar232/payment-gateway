@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { PaymentStatus, PaymentMethod, isValidTransition, TERMINAL_STATES } from '@youpi/common';
+import { PaymentStatus, PaymentMethod, isValidTransition, TERMINAL_STATES, assertCanaryMerchantAllowed } from '@youpi/common';
 
 export class PaymentSessionRepository {
   /**
@@ -10,6 +10,23 @@ export class PaymentSessionRepository {
   }
 
   create(data) {
+    let resolvedMerchant = data.merchantId;
+    if (this.db && typeof data.merchantId === 'string') {
+      try {
+        const mRow = this.db.queryOne('SELECT id, slug, branding FROM merchants WHERE id = ?', [data.merchantId]);
+        if (mRow) {
+          resolvedMerchant = {
+            id: mRow.id,
+            slug: mRow.slug,
+            branding: typeof mRow.branding === 'string' ? JSON.parse(mRow.branding || '{}') : mRow.branding
+          };
+        }
+      } catch {}
+    }
+    assertCanaryMerchantAllowed(resolvedMerchant, {
+      requestedAgencyVvisaUid: (typeof data.metadata === 'object' && data.metadata) ? data.metadata.agencyVvisaUid : undefined
+    });
+
     const id = data.id || crypto.randomUUID();
     const now = new Date().toISOString();
     const metadata = typeof data.metadata === 'object' ? JSON.stringify(data.metadata) : (data.metadata || '{}');

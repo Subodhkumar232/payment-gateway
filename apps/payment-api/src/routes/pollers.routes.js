@@ -213,6 +213,7 @@ export function registerPollerRoutes(server, ctx) {
         HttpServer.json(res, 200, {
           accepted: true,
           observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
+          clientMessageId: body.clientMessageId || null,
           attribution: pipeResult.stages?.stage6?.details || pipeResult,
           pipeline: pipeResult
         });
@@ -225,6 +226,7 @@ export function registerPollerRoutes(server, ctx) {
           status: 'REJECTED',
           reason: pipeResult.failingCondition,
           error: pipeResult.failingReason || pipeResult.details,
+          clientMessageId: body.clientMessageId || null,
           pipeline: pipeResult
         });
         return;
@@ -265,6 +267,7 @@ export function registerPollerRoutes(server, ctx) {
       HttpServer.json(res, 200, {
         accepted: true,
         observationId: result.observationId,
+        clientMessageId: body.clientMessageId || null,
         attribution: result
       });
     } catch (err) {
@@ -447,7 +450,8 @@ export function registerPollerRoutes(server, ctx) {
           reason: 'FRAUDULENT_PAYMENT_INJECTION',
           threatDetected: true,
           banned: true,
-          error: 'FRAUDULENT_PAYMENT_INJECTION: Fake SMS detected. Associated customer identity banned and session terminated.'
+          error: 'FRAUDULENT_PAYMENT_INJECTION: Fake SMS detected. Associated customer identity banned and session terminated.',
+          clientMessageId: body.clientMessageId || null
         });
         return;
       }
@@ -457,6 +461,7 @@ export function registerPollerRoutes(server, ctx) {
         HttpServer.json(res, 200, {
           accepted: true,
           observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
+          clientMessageId: body.clientMessageId || null,
           attribution: pipeResult.stages?.stage6?.details || pipeResult,
           pipeline: pipeResult
         });
@@ -470,6 +475,7 @@ export function registerPollerRoutes(server, ctx) {
           status: 'REJECTED',
           reason: pipeResult.failingCondition,
           error: pipeResult.failingReason || pipeResult.details,
+          clientMessageId: body.clientMessageId || null,
           pipeline: pipeResult
         });
         return;
@@ -484,6 +490,7 @@ export function registerPollerRoutes(server, ctx) {
       HttpServer.json(res, 200, {
         accepted: true,
         status: 'PROCESSED_NON_BANK',
+        clientMessageId: body.clientMessageId || null,
         bankMatch: false,
         message: 'Raw SMS observation ingested and evaluated by server pipeline.'
       });
@@ -510,6 +517,7 @@ export function registerPollerRoutes(server, ctx) {
       HttpServer.json(res, 200, {
         accepted: true,
         observationId: result.observationId,
+        clientMessageId: body.clientMessageId || null,
         attribution: result
       });
     } catch (err) {

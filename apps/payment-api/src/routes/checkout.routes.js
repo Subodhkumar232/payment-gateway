@@ -1,5 +1,5 @@
 import { HttpServer } from '../server.js';
-import { toRupeesString, buildUpiUri, PaymentStatus, PaymentMethod, UPI_PROVIDERS, isInternalServiceRequest, isValidTransition } from '@youpi/common';
+import { toRupeesString, buildUpiUri, PaymentStatus, PaymentMethod, UPI_PROVIDERS, isInternalServiceRequest, isValidTransition, evaluateCanaryMerchantEligibility } from '@youpi/common';
 import { validateSessionDeviceAccess } from '@youpi/core';
 import { isPaymentOwner } from '../auth-guard.js';
 
@@ -1568,6 +1568,19 @@ export function registerCheckoutRoutes(server, ctx) {
 
     const sourceSession = (conflictingSessionId ? ctx.sessionRepo.findById(conflictingSessionId) : null) || targetSession;
     const customerId = body?.customerId || sourceSession?.customerId || targetSession.customerId || null;
+
+    // Fail-Closed Canary Merchant Isolation: Validate merchant before cancelling old or creating new sessions
+    const merchant = ctx.merchantRepo?.findById ? ctx.merchantRepo.findById(sourceSession.merchantId) : null;
+    const canaryCheck = evaluateCanaryMerchantEligibility(merchant || sourceSession.merchantId, {
+      requestedAgencyVvisaUid: (sourceSession.metadata?.agencyVvisaUid || body?.metadata?.agencyVvisaUid)
+    });
+    if (!canaryCheck.allowed) {
+      HttpServer.json(res, canaryCheck.statusCode || 403, {
+        error: canaryCheck.error,
+        code: canaryCheck.code
+      });
+      return;
+    }
 
     // 1. Identify ALL sessions on old/other devices that must be cancelled
     const sessionsToTerminate = new Map();
