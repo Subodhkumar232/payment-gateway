@@ -411,6 +411,37 @@ describe('Gateway Hardening & Invariant Protection Test Suite (#23, #25, #26, #2
     assert.match(res.body.error, /Untrusted Android notification package/);
   });
 
+  test('Issue #61: Android observer rejects observations when rawNotification is missing package parameter', async () => {
+    const deviceId = 'test-android-device-pkg-1';
+    const signingKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    const timestamp = Date.now().toString();
+    const payloadObj = {
+      deviceId,
+      amount: '500.00',
+      amountPaise: '50000',
+      observedAt: new Date().toISOString(),
+      rawNotification: {
+        title: 'Payment Received',
+        text: 'Received Rs 500 via UPI'
+      }
+    };
+    const bodyStr = JSON.stringify(payloadObj);
+    const { generateHmac } = await import('@youpi/common');
+    const signature = generateHmac(`${bodyStr}:${timestamp}`, signingKey);
+
+    const res = await request('/api/v1/pollers/android/events', {
+      method: 'POST',
+      headers: {
+        'X-Timestamp': timestamp,
+        'X-Signature': signature
+      },
+      body: bodyStr
+    });
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /must specify a valid package name in rawNotification\.package/);
+  });
+
   test('Issue #9: findByMobile strictly matches exact numbers without unanchored LIKE injection', async () => {
     const customerRepo = apiInstance.app.context.customerRepo;
     const targetMobile = '9876500001';
@@ -525,7 +556,7 @@ describe('Gateway Hardening & Invariant Protection Test Suite (#23, #25, #26, #2
     // Verify HMAC signature
     const sig = receivedHook.headers['x-gateway-signature'].replace('sha256=', '');
     const ts = receivedHook.headers['x-gateway-timestamp'];
-    const expectedHmac = crypto.createHmac('sha256', secret).update(`${ts}.${JSON.stringify(receivedHook.body)}`).digest('hex');
+    const expectedHmac = crypto.createHmac('sha256', secret).update(JSON.stringify(receivedHook.body)).digest('hex');
     assert.equal(sig, expectedHmac);
   });
 
@@ -829,6 +860,125 @@ describe('Gateway Hardening & Invariant Protection Test Suite (#23, #25, #26, #2
     assert.throws(() => {
       client.verifyWebhook(payload, `sha256=${staleSignature}`, null, String(staleSec));
     }, /timestamp drift exceeded validity window/);
+  });
+
+  test('Issue #69: autoActivate flag is rejected with 403 AUTOACTIVATE_FORBIDDEN in non-test mode without admin token', async () => {
+    const merchant = new MerchantRepository(testDb).findById('00000000-0000-0000-0000-000000000001');
+    const prevEnv = process.env.NODE_ENV;
+    const prevAllow = process.env.ALLOW_TEST_AUTOACTIVATE;
+    try {
+      process.env.NODE_ENV = 'production';
+      delete process.env.ALLOW_TEST_AUTOACTIVATE;
+
+      const url = new URL('/api/v1/payments', baseUrl);
+      const res = await new Promise((resolve, reject) => {
+        const req = http.request(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Merchant-Key': merchant.webhookSecret
+          }
+        }, r => {
+          let data = '';
+          r.on('data', c => { data += c; });
+          r.on('end', () => resolve({ status: r.statusCode, body: JSON.parse(data) }));
+        });
+        req.on('error', reject);
+        req.write(JSON.stringify({
+          orderId: `PROD-AUTOACTIVATE-${Date.now()}`,
+          amount: '500.00',
+          autoActivate: true
+        }));
+        req.end();
+      });
+
+      assert.equal(res.status, 403);
+      assert.equal(res.body.code, 'AUTOACTIVATE_FORBIDDEN');
+    } finally {
+      process.env.NODE_ENV = prevEnv;
+      if (prevAllow !== undefined) process.env.ALLOW_TEST_AUTOACTIVATE = prevAllow;
+    }
+  });
+
+  test('Issue #69: Device-bound checkout sessions fail closed with 401/409 when device credentials are omitted or mismatched on state-changing endpoints', async () => {
+    const sessionRepo = apiInstance.app.context.sessionRepo;
+    const deviceRepo = apiInstance.app.context.deviceRepo;
+    const boundDevId = 'dev_bound_alpha_01';
+    if (deviceRepo) {
+      try {
+        deviceRepo.create({
+          id: boundDevId,
+          publicKey: 'mock_pk_alpha_01',
+          fingerprintHash: 'mock_fp_alpha_01'
+        });
+      } catch {}
+    }
+
+    const session = sessionRepo.create({
+      merchantId: '00000000-0000-0000-0000-000000000001',
+      orderId: `DEVICE-FAIL-CLOSED-${Date.now()}`,
+      amountPaise: 50000n,
+      status: PaymentStatus.ACTIVE,
+      deviceId: boundDevId
+    });
+
+    // 1. Calling /cancel without device credentials fails closed
+    const cancelNoDevUrl = new URL(`/api/v1/checkout/${session.id}/cancel`, baseUrl);
+    const cancelRes = await new Promise((resolve, reject) => {
+      const req = http.request(cancelNoDevUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      }, r => {
+        let data = '';
+        r.on('data', c => { data += c; });
+        r.on('end', () => resolve({ status: r.statusCode, body: JSON.parse(data) }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+
+    assert.equal(cancelRes.status, 409);
+    assert.equal(cancelRes.body.error, 'DUPLICATE_SESSION_DETECTED');
+
+    // 2. Calling /cancel with mismatched device ID is rejected (409 DUPLICATE_SESSION_DETECTED)
+    const cancelWrongDevRes = await new Promise((resolve, reject) => {
+      const req = http.request(cancelNoDevUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Device-Id': 'dev_attacker_different'
+        }
+      }, r => {
+        let data = '';
+        r.on('data', c => { data += c; });
+        r.on('end', () => resolve({ status: r.statusCode, body: JSON.parse(data) }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+
+    assert.equal(cancelWrongDevRes.status, 409);
+    assert.equal(cancelWrongDevRes.body.error, 'DUPLICATE_SESSION_DETECTED');
+
+    // 3. Calling /cancel with admin token succeeds (200 OK)
+    const cancelAdminRes = await new Promise((resolve, reject) => {
+      const req = http.request(cancelNoDevUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.ADMIN_API_TOKEN}`
+        }
+      }, r => {
+        let data = '';
+        r.on('data', c => { data += c; });
+        r.on('end', () => resolve({ status: r.statusCode, body: JSON.parse(data) }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+
+    assert.equal(cancelAdminRes.status, 200);
+    assert.equal(cancelAdminRes.body.status, PaymentStatus.CANCELLED);
   });
 });
 

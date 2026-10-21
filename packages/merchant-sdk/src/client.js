@@ -147,7 +147,7 @@ export class YoupiPaymentClient {
       if (isNaN(ts) || Math.abs(now - ts) > tolerance) {
         throw new Error('Webhook verification failed: timestamp drift exceeded validity window.');
       }
-      const isValid = verifyHmac(`${timestampHeader}.${rawPayloadString}`, secret, actualSignature);
+      const isValid = verifyHmac(rawPayloadString, secret, actualSignature) || verifyHmac(`${timestampHeader}.${rawPayloadString}`, secret, actualSignature);
       if (!isValid) {
         throw new Error('Webhook verification failed: signature mismatch.');
       }

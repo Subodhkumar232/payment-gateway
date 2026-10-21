@@ -105,9 +105,9 @@ export class WebhookEngine {
     };
 
     const payloadString = JSON.stringify(payloadObj);
+    const signature = generateHmac(payloadString, merchant.webhookSecret);
     const deliveryId = crypto.randomUUID();
     const timestamp = Date.now().toString();
-    const signature = generateHmac(`${timestamp}.${payloadString}`, merchant.webhookSecret);
 
     const headers = {
       'Content-Type': 'application/json',
@@ -229,7 +229,7 @@ export class WebhookEngine {
       }
 
       const timestamp = Date.now().toString();
-      const signature = generateHmac(`${timestamp}.${item.payload}`, merchant.webhookSecret);
+      const signature = generateHmac(item.payload, merchant.webhookSecret);
 
       let isSuccess = false;
       let respStatus = null;
