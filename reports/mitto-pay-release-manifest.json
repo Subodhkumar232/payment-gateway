@@ -1,13 +1,13 @@
 {
   "product": "Mitto Pay",
   "releaseCandidate": "mitto-pay-rc1",
-  "generatedAt": "2026-10-21T13:07:00.000Z",
-  "baselineCommitSha": "eb613a9fd1e598a2e4e579343860aad7fdca169a",
+  "generatedAt": "2026-10-21T13:48:00.000Z",
+  "commitSha": "9e4763c66c82c8ba246f00b6fa3347428be7be38",
   "branch": "mitto-pay-main",
   "artifact": {
     "filename": "mitto-pay-rc1.tar.gz",
-    "sha256": "9fd6ed79082c25430d55f89590bfc09f515b54fd782bb2e97d8c4be1de18c07b",
-    "sizeBytes": 2607884
+    "sha256": "c6b9fdd76dfa8962ca4ae2cd7082ff951d41a7de4836209ed7559fbcbecc39f2",
+    "sizeBytes": 2607895
   },
   "dependencies": {
     "lockfile": "package-lock.json",
