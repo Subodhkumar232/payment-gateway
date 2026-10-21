@@ -1868,7 +1868,7 @@
           const btnAction = document.getElementById('btnFailedAction');
           if (btnAction) {
             btnAction.textContent = isExpired ? 'Start New Payment' : 'Try Again';
-            btnAction.onclick = () => retryNewPayment();
+            btnAction.onclick = () => handleRetryNewPayment();
           }
           return;
         }
