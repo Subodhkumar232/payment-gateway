@@ -2489,8 +2489,8 @@
       /* PC Body Container - Bounded to viewport height */
       .ypg-body {
         flex: 1 !important;
-        height: calc(100% - 48px) !important;
-        max-height: calc(100% - 48px) !important;
+        height: auto !important;
+        max-height: none !important;
         display: flex !important;
         flex-direction: column !important;
         padding: 0 !important;
@@ -2629,6 +2629,12 @@
         object-fit: cover;
       }
 
+      #viewUpiContent {
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+      }
+
       /* Right active workspace - Bounded height with buttery-smooth scrolling */
       .ypg-pc-active-view {
         flex: 1 !important;
@@ -2636,6 +2642,8 @@
         max-height: 100% !important;
         padding: 16px 22px !important;
         overflow-y: auto !important;
+        overflow-x: hidden !important;
+        box-sizing: border-box !important;
         display: flex !important;
         flex-direction: column !important;
         min-width: 0 !important;
