@@ -440,7 +440,7 @@ export class AttributionEngine {
         }
 
         // If grace period is 0 (e.g. in instant tests), finalize immediately
-        if (this.gracePeriodMs <= 0) {
+        if (this.verificationPolicy === 'SINGLE_CHANNEL_VALIDATED_GMAIL' || this.gracePeriodMs <= 0) {
           const finalResult = this.sessionRepo.recordVerificationSource(
             currentSession.id,
             normalizedObs.source,

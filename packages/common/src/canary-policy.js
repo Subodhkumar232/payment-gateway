@@ -86,9 +86,10 @@ export function parseCanaryAllowlist(rawAllowlist = process.env.CANARY_MERCHANT_
  */
 export function assertCanaryVerificationPolicy(policy = process.env.YOUPI_VERIFICATION_POLICY) {
   const currentPolicy = String(policy || 'STANDARD').trim().toUpperCase();
-  if (currentPolicy !== 'REQUIRE_DUAL_CHANNEL') {
+  const allowedPolicies = ['REQUIRE_DUAL_CHANNEL', 'SINGLE_CHANNEL_VALIDATED_GMAIL'];
+  if (!allowedPolicies.includes(currentPolicy)) {
     const err = new CanaryConfigurationError(
-      `Fatal configuration error: Canary settlement requires YOUPI_VERIFICATION_POLICY=REQUIRE_DUAL_CHANNEL (current: "${currentPolicy}").`
+      `Fatal configuration error: Canary settlement requires valid policy [${allowedPolicies.join(', ')}] (current: "${currentPolicy}").`
     );
     err.code = 'INVALID_VERIFICATION_POLICY';
     throw err;

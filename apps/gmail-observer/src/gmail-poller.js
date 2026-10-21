@@ -56,7 +56,7 @@ export class GmailPoller {
     const isLocalhost = process.env.YOUPI_MODE === 'localhost' || !process.env.YOUPI_MODE;
     this.apiBaseUrl = options.apiBaseUrl || (isLocalhost ? `http://127.0.0.1:${process.env.PAYMENT_API_PORT || 6100}` : (process.env.BASE_PAYMENT_API_URL || 'http://localhost:6100'));
     this.receivingAccountId = options.receivingAccountId || process.env.RECEIVING_ACCOUNT_ID || null;
-    this.pollIntervalMs = options.pollIntervalMs || Number(process.env.GMAIL_POLL_INTERVAL_MS || 5000);
+    this.pollIntervalMs = options.pollIntervalMs || Number(process.env.GMAIL_POLL_INTERVAL_MS || 2000);
     this.storagePath = options.storagePath || path.join(rootDir, 'data', 'gmail_processed_ids.json');
     this.observerClient = new PaymentObserverClient({
       apiBaseUrl: this.apiBaseUrl,
@@ -375,34 +375,35 @@ export class GmailPoller {
       const listData = await listRes.json();
       const messages = listData.messages || [];
 
-      for (const m of messages) {
-        if (this.processedMessageIds.has(m.id)) continue;
+      const unseenMessages = messages.filter(m => !this.processedMessageIds.has(m.id));
+      if (unseenMessages.length > 0) {
+        await Promise.allSettled(unseenMessages.map(async (m) => {
+          try {
+            const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`, {
+              headers: { 'Authorization': `Bearer ${accessToken}` },
+              signal: AbortSignal.timeout(8000)
+            });
+            if (!msgRes.ok) return;
 
-        try {
-          const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`, {
-            headers: { 'Authorization': `Bearer ${accessToken}` },
-            signal: AbortSignal.timeout(8000)
-          });
-          if (!msgRes.ok) continue;
+            const msgData = await msgRes.json();
+            const headers = msgData.payload?.headers || [];
+            const from = headers.find(h => h.name.toLowerCase() === 'from')?.value || '';
+            const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || '';
+            const dateStr = headers.find(h => h.name.toLowerCase() === 'date')?.value || '';
+            const body = extractBodyFromGmailPayload(msgData.payload) || msgData.snippet || '';
 
-          const msgData = await msgRes.json();
-          const headers = msgData.payload?.headers || [];
-          const from = headers.find(h => h.name.toLowerCase() === 'from')?.value || '';
-          const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || '';
-          const dateStr = headers.find(h => h.name.toLowerCase() === 'date')?.value || '';
-          const body = extractBodyFromGmailPayload(msgData.payload) || msgData.snippet || '';
-
-          await this.processEmail({
-            id: m.id,
-            messageId: m.id,
-            subject,
-            body,
-            from,
-            date: dateStr ? new Date(dateStr) : new Date(Number(msgData.internalDate || Date.now()))
-          });
-        } catch (msgErr) {
-          console.warn(`[Gmail Observer] Error fetching message:`, redactSensitiveData(msgErr.message));
-        }
+            await this.processEmail({
+              id: m.id,
+              messageId: m.id,
+              subject,
+              body,
+              from,
+              date: dateStr ? new Date(dateStr) : new Date(Number(msgData.internalDate || Date.now()))
+            });
+          } catch (msgErr) {
+            console.warn(`[Gmail Observer] Error fetching message:`, redactSensitiveData(msgErr.message));
+          }
+        }));
       }
     } catch (err) {
       console.warn('[Gmail Observer] pollCycle error:', redactSensitiveData(err.message));

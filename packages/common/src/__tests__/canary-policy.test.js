@@ -80,16 +80,27 @@ describe('Centralized Canary Merchant Isolation Policy Tests', () => {
   });
 
   // 7. Policy requirement: fails closed if verification policy is not REQUIRE_DUAL_CHANNEL
-  test('7. Fails closed if verification policy is not REQUIRE_DUAL_CHANNEL', () => {
+  test('7. Fails closed if verification policy is not valid canary policy', () => {
     const res = evaluateCanaryMerchantEligibility(AUTHORIZED_MERCHANT, {
       env: {
         CANARY_MERCHANT_ALLOWLIST: 'VVANFTTKRA',
-        YOUPI_VERIFICATION_POLICY: 'STANDARD'
+        YOUPI_VERIFICATION_POLICY: 'INVALID_POLICY'
       }
     });
     assert.equal(res.allowed, false);
     assert.equal(res.statusCode, 500);
     assert.equal(res.code, 'INVALID_VERIFICATION_POLICY');
+  });
+
+  test('7b. Passes when verification policy is SINGLE_CHANNEL_VALIDATED_GMAIL', () => {
+    const res = evaluateCanaryMerchantEligibility(AUTHORIZED_MERCHANT, {
+      requestedAgencyVvisaUid: 'VVANFTTKRA',
+      env: {
+        CANARY_MERCHANT_ALLOWLIST: 'VVANFTTKRA',
+        YOUPI_VERIFICATION_POLICY: 'SINGLE_CHANNEL_VALIDATED_GMAIL'
+      }
+    });
+    assert.equal(res.allowed, true);
   });
 
   // 8. Authorized merchant succeeds when properly configured

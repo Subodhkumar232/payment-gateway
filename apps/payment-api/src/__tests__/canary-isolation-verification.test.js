@@ -91,9 +91,9 @@ describe('Mitto Pay — Canary Isolation & Dual-Channel Settlement Tests', () =>
     apiInstance.app.context.db.execute("UPDATE payment_sessions SET status = 'SUCCESS' WHERE id = ?", [res.body.paymentId]);
   });
 
-  test('4. Canary settlement strictly fails if YOUPI_VERIFICATION_POLICY is not REQUIRE_DUAL_CHANNEL', async () => {
-    // Temporarily degrade verification policy
-    process.env.YOUPI_VERIFICATION_POLICY = 'STANDARD';
+  test('4. Canary settlement strictly fails if YOUPI_VERIFICATION_POLICY is invalid', async () => {
+    // Temporarily set invalid verification policy
+    process.env.YOUPI_VERIFICATION_POLICY = 'INSECURE_INVALID_POLICY';
 
     const res = await createPayment({
       orderId: 'CANARY-FAIL-SAFE-004',
@@ -108,6 +108,82 @@ describe('Mitto Pay — Canary Isolation & Dual-Channel Settlement Tests', () =>
 
     // Restore strict policy
     process.env.YOUPI_VERIFICATION_POLICY = 'REQUIRE_DUAL_CHANNEL';
+  });
+
+  test('4b. Canary settlement succeeds when YOUPI_VERIFICATION_POLICY is SINGLE_CHANNEL_VALIDATED_GMAIL', async () => {
+    process.env.YOUPI_VERIFICATION_POLICY = 'SINGLE_CHANNEL_VALIDATED_GMAIL';
+
+    const res = await createPayment({
+      orderId: 'CANARY-SINGLE-POLICY-004B',
+      amount: '10.00',
+      autoActivate: true,
+      metadata: {
+        agencyVvisaUid: AUTHORIZED_UID
+      }
+    });
+
+    assert.equal(res.status, 201);
+    assert.ok(res.body.paymentId);
+
+    // Clean slot
+    apiInstance.app.context.db.execute("UPDATE payment_sessions SET status = 'SUCCESS' WHERE id = ?", [res.body.paymentId]);
+    process.env.YOUPI_VERIFICATION_POLICY = 'REQUIRE_DUAL_CHANNEL';
+  });
+
+  test('4c. End-to-end fast confirmation: Validated Gmail observation auto-finalizes to SUCCESS under SINGLE_CHANNEL_VALIDATED_GMAIL', async () => {
+    process.env.YOUPI_VERIFICATION_POLICY = 'SINGLE_CHANNEL_VALIDATED_GMAIL';
+    apiInstance.app.context.attributionEngine.verificationPolicy = 'SINGLE_CHANNEL_VALIDATED_GMAIL';
+
+    let successEmitted = false;
+    let successPayload = null;
+    const startTime = performance.now();
+
+    apiInstance.app.context.eventEmitter.once('PAYMENT.SUCCESS', (data) => {
+      successEmitted = true;
+      successPayload = data;
+    });
+
+    // 1. Create canary session for VVANFTTKRA
+    const createRes = await createPayment({
+      orderId: 'CANARY-GMAIL-FAST-001',
+      amount: '10.00',
+      autoActivate: true,
+      metadata: {
+        agencyVvisaUid: AUTHORIZED_UID,
+        vvisaAmountMinor: 1000
+      }
+    });
+    assert.equal(createRes.status, 201);
+    const paymentId = createRes.body.paymentId;
+
+    // 2. Ingest validated Gmail observation
+    const uTr = '911789526799';
+    const gmailRes = apiInstance.app.context.attributionEngine.processObservation({
+      receivingAccountId: '00000000-0000-0000-0000-000000000002',
+      source: 'GMAIL',
+      amountPaise: 1000n,
+      observedAt: new Date(),
+      bankReferenceNumber: uTr,
+      fingerprintHash: `fp_fast_gmail_${uTr}`
+    });
+
+    const elapsedMs = performance.now() - startTime;
+
+    assert.equal(gmailRes.attributed, true);
+    assert.equal(gmailRes.verificationLevel, 1);
+    assert.equal(gmailRes.outcomeStatus, PaymentStatus.SUCCESS);
+    assert.equal(successEmitted, true);
+    assert.equal(successPayload.paymentId, paymentId);
+    assert.ok(elapsedMs < 100, `Processing took ${elapsedMs.toFixed(2)}ms, expected < 100ms`);
+
+    // Verify session in DB transitioned to SUCCESS
+    const finalSession = apiInstance.app.context.sessionRepo.findById(paymentId);
+    assert.equal(finalSession.status, PaymentStatus.SUCCESS);
+    assert.equal(finalSession.verificationTag, 'Single Verification (Gmail)');
+
+    // Restore
+    process.env.YOUPI_VERIFICATION_POLICY = 'REQUIRE_DUAL_CHANNEL';
+    apiInstance.app.context.attributionEngine.verificationPolicy = 'REQUIRE_DUAL_CHANNEL';
   });
 
   test('5. End-to-end canary settlement: SMS alone stays in PROCESSING; secondary Gmail finalizes to SUCCESS', async () => {
