@@ -359,7 +359,7 @@ export class GmailPoller {
       if (!accessToken) return;
 
       // Strict bank transaction alert filter (read-only search)
-      const query = encodeURIComponent('subject:(credit OR credited OR received OR upi OR deposit OR alert)');
+      const query = encodeURIComponent('from:(bank.in OR hdfcbank.net OR hdfcbank.com OR icicibank.com OR sbi.co.in OR axisbank.com OR kotak.com) OR (credit OR credited OR received OR upi OR deposit OR alert OR update)');
       const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10&q=${query}`, {
         headers: { 'Authorization': `Bearer ${accessToken}` },
         signal: AbortSignal.timeout(8000)
