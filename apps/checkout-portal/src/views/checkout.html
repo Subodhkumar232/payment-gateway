@@ -272,6 +272,10 @@
 
     // Retry / Close on Expired or Failed session
     function handleRetryNewPayment() {
+      if (typeof handleEndAndStartNewPayment === 'function') {
+        handleEndAndStartNewPayment();
+        return;
+      }
       const failRedirectUrl = getFailedRedirectUrl();
       const orderId = state?.orderId || '';
       const reason = state?.status || 'FAILED';
@@ -2566,7 +2570,7 @@
     }
 
     async function handleEndAndStartNewPayment() {
-      const btn = document.getElementById('btnEndAndRestartPayment');
+      const btn = document.getElementById('btnEndAndRestartPayment') || document.getElementById('btnFailedAction');
       if (btn) {
         btn.disabled = true;
         btn.innerHTML = '<span class="ypg-spinner" style="display:inline-block;width:15px;height:15px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:rzpRotate 0.8s linear infinite;margin-right:8px;vertical-align:middle;"></span> CREATING NEW PAYMENT...';
