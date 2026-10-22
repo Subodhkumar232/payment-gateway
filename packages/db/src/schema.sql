@@ -131,7 +131,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_sessions_order ON payment_sessions (merch
 CREATE INDEX IF NOT EXISTS idx_payment_sessions_device ON payment_sessions (device_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_single_active_session_per_order
   ON payment_sessions (merchant_id, order_id)
-  WHERE status NOT IN ('FAILED', 'EXPIRED', 'CANCELLED');
+  WHERE status NOT IN ('FAILED', 'EXPIRED', 'CANCELLED', 'SUSPICIOUS');
 CREATE UNIQUE INDEX IF NOT EXISTS idx_one_slot_per_receiving_account
   ON payment_sessions (receiving_account_id)
   WHERE status IN ('ACTIVE', 'PROCESSING') AND receiving_account_id IS NOT NULL;
