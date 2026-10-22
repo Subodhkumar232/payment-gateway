@@ -131,7 +131,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_sessions_device ON payment_sessions (devi
 -- Retrying a terminal (FAILED, EXPIRED, CANCELLED) order allows a new attempt with the true orderId.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_single_active_session_per_order
   ON payment_sessions (merchant_id, order_id)
-  WHERE status NOT IN ('FAILED', 'EXPIRED', 'CANCELLED');
+  WHERE status NOT IN ('FAILED', 'EXPIRED', 'CANCELLED', 'SUSPICIOUS');
 -- Slot exclusivity is a database invariant, not an application convention: at most one
 -- session per receiving account may occupy the slot (ACTIVE or PROCESSING) at any time.
 -- Concurrent writers are rejected by the engine instead of relying on lock contention.

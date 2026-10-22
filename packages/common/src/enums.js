@@ -9,7 +9,8 @@ export const PaymentStatus = Object.freeze({
   SUCCESS: 'SUCCESS',
   FAILED: 'FAILED',
   EXPIRED: 'EXPIRED',
-  CANCELLED: 'CANCELLED'
+  CANCELLED: 'CANCELLED',
+  SUSPICIOUS: 'SUSPICIOUS'
 });
 
 /**
@@ -19,7 +20,8 @@ export const PublicPaymentOutcome = Object.freeze({
   SUCCESS: 'SUCCESS',
   FAILED: 'FAILED',
   EXPIRED: 'EXPIRED',
-  CANCELLED: 'CANCELLED'
+  CANCELLED: 'CANCELLED',
+  SUSPICIOUS: 'SUSPICIOUS'
 });
 
 /**

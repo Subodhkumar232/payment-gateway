@@ -72,7 +72,14 @@ export function runMigrations(targetDb) {
   try { db.exec("ALTER TABLE payment_sessions ADD COLUMN verification_sources TEXT DEFAULT '[]';"); } catch {}
   try { db.exec("ALTER TABLE payment_sessions ADD COLUMN verification_tag TEXT DEFAULT 'UNVERIFIED';"); } catch {}
   try { db.exec("ALTER TABLE payment_sessions ADD COLUMN attempt_id TEXT;"); } catch {}
-  try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_single_active_session_per_order ON payment_sessions (merchant_id, order_id) WHERE status NOT IN ('FAILED', 'EXPIRED', 'CANCELLED');"); } catch {}
+  // Drop the index if it predates the SUSPICIOUS status so the CREATE below rebuilds it with the correct predicate.
+  try {
+    const idxRow = db.queryOne("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_single_active_session_per_order'");
+    if (idxRow && idxRow.sql && !idxRow.sql.includes('SUSPICIOUS')) {
+      db.exec("DROP INDEX idx_single_active_session_per_order;");
+    }
+  } catch {}
+  try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_single_active_session_per_order ON payment_sessions (merchant_id, order_id) WHERE status NOT IN ('FAILED', 'EXPIRED', 'CANCELLED', 'SUSPICIOUS');"); } catch {}
   try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_one_slot_per_receiving_account ON payment_sessions (receiving_account_id) WHERE status IN ('ACTIVE', 'PROCESSING') AND receiving_account_id IS NOT NULL;"); } catch {}
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_payment_sessions_order ON payment_sessions (merchant_id, order_id, created_at);"); } catch {}
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_retry ON webhook_deliveries (is_successful, next_retry_at);"); } catch {}

@@ -35,17 +35,20 @@ export const VALID_TRANSITIONS = Object.freeze({
     PaymentStatus.SUCCESS,
     PaymentStatus.FAILED,
     PaymentStatus.EXPIRED,
-    PaymentStatus.CANCELLED
+    PaymentStatus.CANCELLED,
+    PaymentStatus.SUSPICIOUS
   ],
   [PaymentStatus.PROCESSING]: [
     PaymentStatus.SUCCESS,
     PaymentStatus.FAILED,
-    PaymentStatus.EXPIRED
+    PaymentStatus.EXPIRED,
+    PaymentStatus.SUSPICIOUS
   ],
   [PaymentStatus.SUCCESS]: [],
   [PaymentStatus.FAILED]: [],
   [PaymentStatus.EXPIRED]: [],
-  [PaymentStatus.CANCELLED]: []
+  [PaymentStatus.CANCELLED]: [],
+  [PaymentStatus.SUSPICIOUS]: []
 });
 
 /** States that can never change again. */
@@ -53,7 +56,8 @@ export const TERMINAL_STATES = Object.freeze([
   PaymentStatus.SUCCESS,
   PaymentStatus.FAILED,
   PaymentStatus.EXPIRED,
-  PaymentStatus.CANCELLED
+  PaymentStatus.CANCELLED,
+  PaymentStatus.SUSPICIOUS
 ]);
 
 /** States that occupy a merchant's single UPI concurrency slot. */
