@@ -6,6 +6,7 @@ const testFiles = [
   'packages/db/src/__tests__/auth-matrix.test.js',
   'packages/db/src/__tests__/db.test.js',
   'packages/db/src/__tests__/schema-parity.test.js',
+  'packages/db/src/__tests__/migrate-suspicious-index.test.js',
   'packages/core/src/__tests__/core.test.js',
   'packages/core/src/__tests__/suspicious-status.test.js',
   'packages/core/src/__tests__/queue-timing.test.js',
