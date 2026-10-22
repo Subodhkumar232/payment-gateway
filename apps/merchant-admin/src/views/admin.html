@@ -25,6 +25,7 @@
       const read = () => { try { return sessionStorage.getItem(KEY) || ''; } catch (e) { return ''; } };
       const write = (t) => { try { sessionStorage.setItem(KEY, t); } catch (e) {} };
       const clear = () => { try { sessionStorage.removeItem(KEY); } catch (e) {} };
+      const token = () => read();
 
       function isProtected(url) {
         return /\/api\/v1\/admin\//.test(url) && !/\/admin\/sms-gateway\/download-apk/.test(url);
@@ -72,24 +73,26 @@
       window.fetch = async function (input, init = {}) {
         const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
         if (!isProtected(url)) return nativeFetch(input, init);
-        let token = read();
-        if (!token) token = await prompt();
+        let tokenVal = read();
+        if (!tokenVal) tokenVal = await prompt();
         const headers = new Headers(init.headers || (typeof input === 'object' && input.headers ? input.headers : {}));
-        if (!headers.has('x-admin-token') && token) headers.set('x-admin-token', token);
+        if (!headers.has('x-admin-token') && tokenVal) headers.set('x-admin-token', tokenVal);
         const nextInit = { ...init, headers };
-        const res = await nativeFetch(input, nextInit);
+        let res = await nativeFetch(input, nextInit);
         if (res.status === 401) {
           clear();
           const retryToken = await prompt('Invalid or expired admin token. Please re-enter.');
           if (retryToken) {
             headers.set('x-admin-token', retryToken);
-            return nativeFetch(input, { ...init, headers });
+            res = await nativeFetch(input, { ...init, headers });
+            if (res.ok && typeof connectAdminEventsSse === 'function') connectAdminEventsSse();
+            if (res.ok && typeof connectServicesLogsSse === 'function') connectServicesLogsSse();
           }
         }
         return res;
       };
 
-      return { read, write, clear, prompt };
+      return { read, write, clear, prompt, token };
     })();
 
     window.API_BASE = "{{API_BASE_URL}}";

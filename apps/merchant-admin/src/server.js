@@ -20,11 +20,31 @@ const BASE_SECURITY_HEADERS = Object.freeze({
   'Content-Security-Policy': "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'; object-src 'none'"
 });
 
-/** True when the caller presented the admin bearer token in constant time. */
-function hasAdminToken(req) {
+/** True when the caller presented the admin bearer token in constant time (or ?token= on GET SSE). */
+function hasAdminToken(req, url = null, pathname = '') {
   const match = /^Bearer\s+(.+)$/i.exec(req.headers?.['authorization'] || '');
-  if (!match) return false;
-  return safeEqual(match[1].trim(), getAdminToken());
+  if (match) {
+    return safeEqual(match[1].trim(), getAdminToken());
+  }
+  // NOTE: the stream token is deliberately NOT accepted from a query parameter. A
+  // credential in the URL ends up in access logs, browser history and Referer headers.
+  // The dashboards now open the stream with fetch() so the token travels in the
+  // Authorization header only.
+  return false;
+}
+
+/**
+ * Strips headers a browser must not be able to spoof when relaying to an internal service.
+ */
+function sanitizedForwardHeaders(req, targetHost) {
+  const headers = { ...req.headers, host: targetHost };
+  for (const name of Object.keys(headers)) {
+    const lower = name.toLowerCase();
+    if (lower === 'x-internal-render' || lower === 'x-internal-token') {
+      delete headers[name];
+    }
+  }
+  return headers;
 }
 
 // In production, reliably ensure environment variables from .env are loaded if not already provided
@@ -286,16 +306,22 @@ export class AdminServer {
 
       // Merged Control Center Supervisor Proxy: /api/services/* and /api/logs/stream -> Control Center on port 8090
       if (pathname.startsWith('/api/services') || pathname === '/api/logs/stream') {
+        if (!hasAdminToken(req, url, pathname)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unauthorized', code: 'AUTH_REQUIRED' }));
+          return;
+        }
         const ccPort = Number(process.env.CONTROL_CENTER_PORT || 8090);
+        const forwardHeaders = sanitizedForwardHeaders(req, `localhost:${ccPort}`);
+        if (!forwardHeaders.authorization && !forwardHeaders.Authorization) {
+          forwardHeaders.Authorization = `Bearer ${getAdminToken()}`;
+        }
         const proxyReq = http.request({
           hostname: '127.0.0.1',
           port: ccPort,
           path: req.url,
           method: req.method,
-          headers: {
-            ...req.headers,
-            host: `localhost:${ccPort}`
-          }
+          headers: forwardHeaders
         }, (proxyRes) => {
           res.writeHead(proxyRes.statusCode, proxyRes.headers);
           proxyRes.pipe(res);
@@ -324,9 +350,8 @@ export class AdminServer {
           path: req.url,
           method: req.method,
           headers: {
-            ...req.headers,
+            ...sanitizedForwardHeaders(req, `localhost:${targetPort}`),
             'x-merchant-id': req.headers['x-merchant-id'] || defaultMerchantId,
-            host: `localhost:${targetPort}`,
             'x-forwarded-host': req.headers.host || '',
             'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'http'
           }
@@ -374,7 +399,20 @@ export class AdminServer {
         }
       }
 
-
+      // Self-hosted UI fonts (CSP blocks third-party font CDNs)
+      const fontMatch = /^\/fonts\/(dm-sans|sora)\.woff2$/.exec(pathname);
+      if (fontMatch && req.method === 'GET') {
+        const fontPath = path.resolve(__dirname, '../public/fonts', `${fontMatch[1]}.woff2`);
+        if (fs.existsSync(fontPath)) {
+          res.writeHead(200, {
+            'Content-Type': 'font/woff2',
+            'Cache-Control': 'public, max-age=31536000, immutable',
+            'X-Content-Type-Options': 'nosniff'
+          });
+          fs.createReadStream(fontPath).pipe(res);
+          return;
+        }
+      }
 
       // CSS: /src/styles/input.css or /css/*
       if (pathname === '/src/styles/input.css' || pathname.startsWith('/css/')) {

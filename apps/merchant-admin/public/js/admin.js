@@ -379,24 +379,104 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
 
     // --- LIVE AGGREGATE TERMINAL LOGS (SSE) ---
     let rawLogsBuffer = [];
+
+    /**
+     * Opens an SSE stream with an Authorization header.
+     */
+    function openAuthenticatedEventStream(url, token, onEvent, onError) {
+      const controller = new AbortController();
+      const listeners = new Map();
+      let closed = false;
+
+      const emit = (type, data) => {
+        const handlers = listeners.get(type) || [];
+        for (const handler of handlers) {
+          try { handler({ data, type }); } catch (e) { }
+        }
+        if (onEvent) { try { onEvent(type, data); } catch (e) { } }
+      };
+
+      const run = async () => {
+        try {
+          const res = await fetch(url, {
+            headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'text/event-stream' },
+            signal: controller.signal
+          });
+          if (!res.ok || !res.body) throw new Error(`SSE failed: ${res.status}`);
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          while (!closed) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            let sep;
+            while ((sep = buffer.indexOf('\n\n')) !== -1) {
+              const raw = buffer.slice(0, sep);
+              buffer = buffer.slice(sep + 2);
+
+              let eventName = 'message';
+              const dataLines = [];
+              for (const line of raw.split('\n')) {
+                if (line.startsWith('event:')) eventName = line.slice(6).trim();
+                else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
+              }
+              emit(eventName, dataLines.join('\n'));
+            }
+          }
+        } catch (err) {
+          if (!closed) {
+            if (typeof apiSse.onerror === 'function') { try { apiSse.onerror(err); } catch (e) { } }
+            if (onError) { try { onError(err); } catch (e) { } }
+          }
+        }
+      };
+
+      const apiSse = {
+        addEventListener(type, handler) {
+          if (!listeners.has(type)) listeners.set(type, []);
+          listeners.get(type).push(handler);
+        },
+        removeEventListener(type, handler) {
+          const arr = listeners.get(type) || [];
+          const i = arr.indexOf(handler);
+          if (i !== -1) arr.splice(i, 1);
+        },
+        close() {
+          closed = true;
+          try { controller.abort(); } catch (e) { }
+        },
+        onerror: null
+      };
+
+      run();
+      return apiSse;
+    }
+
     function connectServicesLogsSse() {
       if (servicesLogsSse) return;
+      const token = window.__youpiAdminAuth ? window.__youpiAdminAuth.token() : '';
+      if (!token) return;
       try {
-        servicesLogsSse = new EventSource('/api/logs/stream');
-        servicesLogsSse.addEventListener('log', (e) => {
-          try {
-            const entry = JSON.parse(e.data);
-            appendLogEntry(entry);
-          } catch { }
-        });
-        servicesLogsSse.addEventListener('status_change', () => {
-          loadServices();
-        });
-        servicesLogsSse.onerror = () => {
-          servicesLogsSse.close();
-          servicesLogsSse = null;
-          setTimeout(connectServicesLogsSse, 5000);
-        };
+        servicesLogsSse = openAuthenticatedEventStream(
+          '/api/logs/stream',
+          token,
+          (eventName, data) => {
+            if (eventName === 'log') {
+              try { appendLogEntry(JSON.parse(data)); } catch { }
+            } else if (eventName === 'status_change') {
+              loadServices();
+            }
+          },
+          () => {
+            servicesLogsSse.close();
+            servicesLogsSse = null;
+            setTimeout(connectServicesLogsSse, 5000);
+          }
+        );
       } catch (e) { }
     }
 
@@ -2059,30 +2139,39 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
 
     function connectAdminEventsSse() {
       try {
-        const adminSse = new EventSource(`${API_BASE}/api/v1/admin/stream`);
-        adminSse.addEventListener('counter_payment_requested', (event) => {
-          pollGlobalCounterPending();
-          fetchLiveData();
-          if (typeof fetchCounterPayments === 'function') fetchCounterPayments();
-          try {
-            const payload = event.data ? JSON.parse(event.data) : null;
-            const isCash = payload?.method === 'CASH_COUNTER';
-            const amt = payload?.amountPaise ? `₹${(Number(payload.amountPaise) / 100).toFixed(2)}` : '';
-            const ord = payload?.orderId ? `(Order #${payload.orderId})` : '';
-            showAdminToast(`🔔 Cashier Prompt: Customer requested ${isCash ? '💵 Cash at Till' : '💳 Card at POS'} ${amt} ${ord}!`);
-          } catch (e) {
-            showAdminToast('🔔 Cashier Prompt: In-store customer selected Cash/Card payment!');
+        const adminToken = window.__youpiAdminAuth ? window.__youpiAdminAuth.token() : '';
+        if (!adminToken) return;
+        if (window.__adminSse) { try { window.__adminSse.close(); } catch (e) {} }
+        const adminSse = window.__adminSse = openAuthenticatedEventStream(
+          `${API_BASE}/api/v1/admin/stream`,
+          adminToken,
+          (eventName, data) => {
+            if (eventName === 'counter_payment_requested') {
+              const event = { data };
+              pollGlobalCounterPending();
+              fetchLiveData();
+              if (typeof fetchCounterPayments === 'function') fetchCounterPayments();
+              try {
+                const payload = event.data ? JSON.parse(event.data) : null;
+                const isCash = payload?.method === 'CASH_COUNTER';
+                const amt = payload?.amountPaise ? `₹${(Number(payload.amountPaise) / 100).toFixed(2)}` : '';
+                const ord = payload?.orderId ? `(Order #${payload.orderId})` : '';
+                showAdminToast(`🔔 Cashier Prompt: Customer requested ${isCash ? '💵 Cash at Till' : '💳 Card at POS'} ${amt} ${ord}!`);
+              } catch (e) {
+                showAdminToast('🔔 Cashier Prompt: In-store customer selected Cash/Card payment!');
+              }
+            } else if (eventName === 'status_change') {
+              pollGlobalCounterPending();
+              fetchLiveData();
+              if (typeof fetchCounterPayments === 'function') fetchCounterPayments();
+            }
+          },
+          () => {
+            if (window.__adminSse) { try { window.__adminSse.close(); } catch (e) {} }
+            window.__adminSse = null;
+            setTimeout(connectAdminEventsSse, 3000);
           }
-        });
-        adminSse.addEventListener('status_change', () => {
-          pollGlobalCounterPending();
-          fetchLiveData();
-          if (typeof fetchCounterPayments === 'function') fetchCounterPayments();
-        });
-        adminSse.onerror = () => {
-          adminSse.close();
-          setTimeout(connectAdminEventsSse, 3000);
-        };
+        );
       } catch (e) { }
     }
 
