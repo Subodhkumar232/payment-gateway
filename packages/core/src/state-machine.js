@@ -36,6 +36,8 @@ export function toPublicOutcome(status) {
       return 'EXPIRED';
     case 'CANCELLED':
       return 'CANCELLED';
+    case 'SUSPICIOUS':
+      return 'SUSPICIOUS';
     default:
       throw new Error(`Status '${status}' is an internal non-terminal state and cannot be mapped to a public outcome.`);
   }
