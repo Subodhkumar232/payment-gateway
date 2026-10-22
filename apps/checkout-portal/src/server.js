@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateQrSvg } from '@youpi/core';
 import { getInternalServiceToken } from '@youpi/common';
+import { BRANDING_CONFIG } from './config/branding.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -208,14 +209,41 @@ export class CheckoutServer {
   renderHtml(paymentId, state) {
     let html = this.loadTemplateWithPartials();
 
-    const appName = state?.branding?.appName || 'YouPI PG';
-    const primaryColor = state?.branding?.primaryColor || '#0b63e5';
-    const merchantName = state?.merchantName || 'Merchant Checkout';
+    const businessName = (state?.merchantName && state.merchantName !== 'YOUPI Demo Store' && state.merchantName !== 'Merchant Checkout')
+      ? state.merchantName
+      : BRANDING_CONFIG.businessName;
+
+    const appName = (state?.branding?.appName && state?.branding?.appName !== 'YOUPI PG')
+      ? state.branding.appName
+      : BRANDING_CONFIG.poweredBy;
+
+    const primaryColor = state?.branding?.primaryColor || BRANDING_CONFIG.primaryColor;
     const orderId = state?.orderId || '';
-    const logoUrl = state?.branding?.logoUrl || '';
-    const sidebarNotice = state?.branding?.sidebarNotice || 'Fast & Secure 256-Bit Encrypted Payments';
-    const counterInstructions = state?.branding?.counterInstructions || 'Please visit the billing counter and present this screen to the cashier.';
+    const logoUrl = state?.branding?.logoUrl || BRANDING_CONFIG.logoUrl;
+    const sidebarNotice = state?.branding?.sidebarNotice || BRANDING_CONFIG.sidebarNotice;
+    const counterInstructions = state?.branding?.counterInstructions || BRANDING_CONFIG.counterInstructions;
     const vpa = state?.payeeVpa || state?.vpa || 'merchant@upi';
+    const supportEmail = (state?.branding?.supportEmails && state.branding.supportEmails[0]) || BRANDING_CONFIG.supportEmail;
+    const supportPhone = (state?.branding?.supportMobiles && state.branding.supportMobiles[0]) || BRANDING_CONFIG.supportPhone;
+
+    const normalizedState = {
+      ...(state || {}),
+      merchantName: businessName,
+      branding: {
+        ...(state?.branding || {}),
+        appName,
+        primaryColor,
+        logoUrl,
+        sidebarNotice,
+        counterInstructions,
+        supportEmails: (state?.branding?.supportEmails && state.branding.supportEmails.length > 0)
+          ? state.branding.supportEmails
+          : [supportEmail],
+        supportMobiles: (state?.branding?.supportMobiles && state.branding.supportMobiles.length > 0)
+          ? state.branding.supportMobiles
+          : [supportPhone]
+      }
+    };
 
     // In production and localhost, use relative '' so browser requests hit the checkout portal /api proxy
     // This avoids cross-origin blocking, CORS errors, and tunnel DNS resolution issues.
@@ -249,12 +277,15 @@ export class CheckoutServer {
       PAYMENT_ID: paymentId,
       API_BASE_URL: clientApiBase,
       APP_NAME: appName,
+      POWERED_BY: appName,
       PRIMARY_COLOR: primaryColor,
-      MERCHANT_NAME: merchantName,
+      MERCHANT_NAME: businessName,
       ORDER_ID: orderId,
       AMOUNT: state?.amount || '0.00',
       VPA: vpa,
       LOGO_URL: logoUrl,
+      SUPPORT_EMAIL: supportEmail,
+      SUPPORT_PHONE: supportPhone,
       SIDEBAR_NOTICE: sidebarNotice,
       COUNTER_INSTRUCTIONS: counterInstructions,
       SERVER_HEALTH_CLASS: healthClass,
@@ -272,7 +303,7 @@ export class CheckoutServer {
       PC_CARD_STYLE: pcCardStyle,
       DOWNTIME_ALT_BTN_DISPLAY: downtimeAltBtnDisplay,
       DOWNTIME_ALT_BTN_LABEL: downtimeAltBtnLabel,
-      INITIAL_STATE_JSON: serializeForScript(state || {})
+      INITIAL_STATE_JSON: serializeForScript(normalizedState)
     });
   }
 

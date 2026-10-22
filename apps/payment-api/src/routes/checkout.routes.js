@@ -1,5 +1,5 @@
 import { HttpServer } from '../server.js';
-import { toRupeesString, buildUpiUri, PaymentStatus, PaymentMethod, UPI_PROVIDERS, isInternalServiceRequest, isValidTransition, evaluateCanaryMerchantEligibility } from '@youpi/common';
+import { toRupeesString, buildUpiUri, PaymentStatus, PaymentMethod, UPI_PROVIDERS, isInternalServiceRequest, isValidTransition, evaluateCanaryMerchantEligibility, BRANDING_CONFIG } from '@youpi/common';
 import { validateSessionDeviceAccess } from '@youpi/core';
 import { isPaymentOwner } from '../auth-guard.js';
 
@@ -85,25 +85,32 @@ function checkSessionDeviceAccess(session, req, body = null, ctx = null) {
  * Prevents internal credentials (gmailConfig, cloudflareTunnelCommand, tokens) from leaking to public checkouts.
  */
 function sanitizePublicBranding(raw = {}) {
+  const supportEmails = Array.isArray(raw.supportEmails) && raw.supportEmails.length > 0
+    ? raw.supportEmails
+    : (raw.supportEmail ? [raw.supportEmail] : [...BRANDING_CONFIG.supportEmails]);
+  const supportMobiles = Array.isArray(raw.supportMobiles) && raw.supportMobiles.length > 0
+    ? raw.supportMobiles
+    : (raw.supportMobile ? [raw.supportMobile] : [...BRANDING_CONFIG.supportMobiles]);
+
   // Strict explicit allowlist to prevent arbitrary internal metadata leaks (CWE-200 / OWASP A01)
   return {
-    appName: raw.appName || 'YOUPI PG',
-    primaryColor: raw.primaryColor || '#2563eb',
+    appName: (raw.appName && raw.appName !== 'YOUPI PG') ? raw.appName : BRANDING_CONFIG.appName,
+    primaryColor: raw.primaryColor || BRANDING_CONFIG.primaryColor,
     headerTheme: raw.headerTheme || 'gradient',
-    logoUrl: raw.logoUrl || null,
-    counterInstructions: raw.counterInstructions || 'Please visit the billing counter and present this screen to the cashier.',
-    cardCounterInstructions: raw.cardCounterInstructions || 'Please swipe, insert, or tap your credit or debit card on the store POS terminal at the billing desk.',
-    supportEmails: Array.isArray(raw.supportEmails) ? raw.supportEmails : [],
-    supportMobiles: Array.isArray(raw.supportMobiles) ? raw.supportMobiles : [],
+    logoUrl: raw.logoUrl || BRANDING_CONFIG.logoUrl,
+    counterInstructions: raw.counterInstructions || BRANDING_CONFIG.counterInstructions,
+    cardCounterInstructions: raw.cardCounterInstructions || BRANDING_CONFIG.cardCounterInstructions,
+    supportEmails,
+    supportMobiles,
     privacyPolicyUrl: raw.privacyPolicyUrl || null,
     termsUrl: raw.termsUrl || null,
     sellingMode: raw.sellingMode || 'ONLINE',
     customCss: raw.customCss || null,
     enabledPaymentMethods: Array.isArray(raw.enabledPaymentMethods) ? raw.enabledPaymentMethods : ['UPI'],
-    sidebarNotice: raw.sidebarNotice || undefined,
+    sidebarNotice: raw.sidebarNotice || BRANDING_CONFIG.sidebarNotice,
     checkoutNotice: raw.checkoutNotice || undefined,
     footerGuarantee: raw.footerGuarantee || undefined,
-    trustBadgeText: raw.trustBadgeText || undefined,
+    trustBadgeText: raw.trustBadgeText || BRANDING_CONFIG.trustBadgeText,
     hideTrustBadge: raw.hideTrustBadge !== undefined ? Boolean(raw.hideTrustBadge) : undefined,
     subbannerText: raw.subbannerText || undefined,
     hideSubbanner: raw.hideSubbanner !== undefined ? Boolean(raw.hideSubbanner) : undefined,
@@ -400,11 +407,16 @@ export function registerCheckoutRoutes(server, ctx) {
     // Terminal session handling: if session is terminal, return terminal state directly (CASE 4)
     if ([PaymentStatus.SUCCESS, PaymentStatus.FAILED, PaymentStatus.EXPIRED, PaymentStatus.CANCELLED].includes(session.status)) {
       const merchant = ctx.merchantRepo.findById(session.merchantId);
+      const rawMerchant = merchant?.businessName;
+      const merchantName = (!rawMerchant || rawMerchant === 'YOUPI Demo Store' || rawMerchant === 'Merchant')
+        ? BRANDING_CONFIG.businessName
+        : rawMerchant;
       const branding = sanitizePublicBranding(merchant?.branding || {});
       HttpServer.json(res, 200, {
         id: session.id,
         paymentId: session.id,
         orderId: session.orderId,
+        merchantName,
         amount: toRupeesString(session.amountPaise),
         amountPaise: session.amountPaise.toString(),
         currency: session.currency,
@@ -608,7 +620,7 @@ export function registerCheckoutRoutes(server, ctx) {
     HttpServer.json(res, 200, {
       paymentId: session.id,
       orderId: session.orderId,
-      merchantName: merchant?.businessName || 'Merchant',
+      merchantName: (!merchant?.businessName || merchant.businessName === 'YOUPI Demo Store' || merchant.businessName === 'Merchant') ? BRANDING_CONFIG.businessName : merchant.businessName,
       amount: toRupeesString(session.amountPaise),
       amountPaise: session.amountPaise.toString(),
       currency: session.currency,

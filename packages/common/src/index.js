@@ -11,3 +11,4 @@ export * from './secrets.js';
 export * from './tunnel-command.js';
 export * from './state-machine.js';
 export * from './canary-policy.js';
+export * from './branding.js';

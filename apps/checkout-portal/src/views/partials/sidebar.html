@@ -4,8 +4,8 @@
         <!-- Merchant Brand Header -->
         <div class="ypg-pc-brand-header">
           <div class="ypg-pc-avatar" id="pcMerchantAvatarBox">
-            <span id="pcMerchantAvatarLetter">M</span>
-            <img id="pcMerchantAvatarImg" alt="Logo" style="display:none;" />
+            <span id="pcMerchantAvatarLetter" style="display:none;">V</span>
+            <img id="pcMerchantAvatarImg" src="{{LOGO_URL}}" alt="{{MERCHANT_NAME}}" style="display:block;" onerror="this.style.display='none'; document.getElementById('pcMerchantAvatarLetter').style.display='block';" />
           </div>
           <div class="ypg-pc-brand-info">
             <div class="ypg-pc-merchant-name" id="pcMerchantName">{{MERCHANT_NAME}}</div>
@@ -15,7 +15,7 @@
                 <path d="M8.5 12l2.5 2.5 5-5" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"
                   stroke-linejoin="round" />
               </svg>
-              <span id="pcTrustBadgeText">YouPI PG Trusted Business</span>
+              <span id="pcTrustBadgeText">Verified Business · Powered by {{POWERED_BY}}</span>
             </div>
           </div>
         </div>
@@ -27,7 +27,7 @@
             <circle cx="20" cy="21" r="1" />
             <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
           </svg>
-          <span id="pcSocialProofText">500+ orders last month from {{MERCHANT_NAME}}</span>
+          <span id="pcSocialProofText">Secured by {{POWERED_BY}} · 256-Bit Bank Encryption</span>
         </div>
 
         <!-- Price Summary Card (STRICTLY NO UPI ID VISIBLE) -->

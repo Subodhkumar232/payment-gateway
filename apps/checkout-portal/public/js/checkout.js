@@ -1505,8 +1505,8 @@
     function renderState(data) {
       state = data;
       const b = data.branding || {};
-      const appName = b.appName || 'YouPI PG';
-      const merchantName = data.merchantName || 'Merchant Checkout';
+      const appName = (b.appName && b.appName !== 'YOUPI PG') ? b.appName : 'Mitto Pay';
+      const merchantName = (data.merchantName && data.merchantName !== 'YOUPI Demo Store' && data.merchantName !== 'Merchant Checkout') ? data.merchantName : 'V-Visa Business';
 
       // 1. Dynamic Title
       document.title = `${merchantName} · ${appName} Checkout`;
@@ -1531,7 +1531,7 @@
         } else {
           trustBadgeEl.style.display = 'inline-flex';
           if (trustBadgeTextEl) {
-            trustBadgeTextEl.textContent = b.trustBadgeText || `${appName} Verified Business`;
+            trustBadgeTextEl.textContent = b.trustBadgeText || `Verified Business · Powered by ${appName}`;
           }
         }
       }
@@ -1545,7 +1545,7 @@
         } else {
           subbannerEl.style.display = 'flex';
           if (subbannerTextEl) {
-            subbannerTextEl.textContent = b.subbannerText || b.sidebarNotice || `Verified & Protected by ${appName}`;
+            subbannerTextEl.textContent = b.subbannerText || b.sidebarNotice || `Secured by ${appName} · 256-Bit Bank Encryption`;
           }
         }
       }
@@ -1590,7 +1590,7 @@
         } else {
           pcTrust.style.display = 'inline-flex';
           if (pcTrustText) {
-            pcTrustText.textContent = b.trustBadgeText || `${appName} Trusted Business`;
+            pcTrustText.textContent = b.trustBadgeText || `Verified Business · Powered by ${appName}`;
           }
         }
       }
@@ -1604,7 +1604,7 @@
         } else {
           pcSocialWrap.style.display = 'flex';
           if (pcSocialProof) {
-            pcSocialProof.textContent = b.subbannerText || b.sidebarNotice || `500+ orders last month from ${data.merchantName || 'Merchant'}`;
+            pcSocialProof.textContent = b.subbannerText || b.sidebarNotice || `Secured by ${appName} · 256-Bit Bank Encryption`;
           }
         }
       }
@@ -1748,7 +1748,7 @@
         if (splashDefaultShield) splashDefaultShield.style.display = 'none';
       }
       if (splashSecuredText) {
-        splashSecuredText.textContent = b.hidePoweredBy ? (b.appName || '256-Bit Bank Encryption') : (b.appName || 'YouPI PG');
+        splashSecuredText.textContent = b.hidePoweredBy ? (b.appName || '256-Bit Bank Encryption') : (b.appName || 'Mitto Pay');
       }
 
       // 12. Legal Disclaimer Strip
@@ -1764,14 +1764,12 @@
       // 13. Success Screen Description
       const successDesc = document.getElementById('successDescText');
       if (successDesc) {
-        successDesc.textContent = b.hidePoweredBy
-          ? 'Your payment was automatically verified by banking observers.'
-          : `Your payment was automatically verified by ${appName} banking observers.`;
+        successDesc.textContent = 'Your payment was automatically verified.';
       }
 
       // 14. Help Modal Title & Legal Links
       const helpTitle = document.getElementById('helpModalTitle');
-      if (helpTitle) helpTitle.textContent = `${appName} Help & Support`;
+      if (helpTitle) helpTitle.textContent = `${merchantName} Help & Support`;
       renderHelpLegalLinks(b);
 
       // 1. Conflict detection: single active payment session invariant
@@ -1902,7 +1900,7 @@
             }
           } else {
             if (titleEl) titleEl.textContent = 'Payment Successful!';
-            if (descEl) descEl.textContent = 'Your payment was automatically verified by YouPI PG banking observers.';
+            if (descEl) descEl.textContent = 'Your payment was automatically verified.';
             if (codApiBox) codApiBox.style.display = 'none';
           }
 
@@ -2259,7 +2257,7 @@
     }
 
     // --- RAZORPAY AUTHENTIC "PROCESSING YOUR PAYMENT" MODAL SHEET ---
-    function openProcessingModal(title = 'Processing your payment', subtitle = 'This will only take a few seconds.') {
+    function openProcessingModal(title = 'Processing payment securely with Mitto Pay', subtitle = 'Bank verification in progress. Please do not close or refresh this window.') {
       const modal = document.getElementById('rzpProcessingModal');
       const tEl = document.getElementById('rzpProcessingTitle');
       const sEl = document.getElementById('rzpProcessingSubtitle');
@@ -2365,7 +2363,7 @@
 
     // --- MANUAL PAYMENT DONE VERIFICATION ---
     async function submitPaymentDone() {
-      openProcessingModal('Processing your payment', 'This will only take a few seconds.');
+      openProcessingModal('Processing payment securely with Mitto Pay', 'Bank verification in progress. Please do not close or refresh this window.');
       emitTriggerHook('PAYMENT_DONE_CLICKED');
 
       try {
@@ -2678,11 +2676,18 @@
       const phoneBox = document.getElementById('helpModalMobilesContainer');
       const caseBox = document.getElementById('helpModalCaseInfoText');
 
-      if (emailBox && info.supportEmails) {
-        emailBox.innerHTML = `<strong>Email:</strong> ${info.supportEmails.join(', ')}`;
+      const emails = (info && info.supportEmails && info.supportEmails.length > 0)
+        ? info.supportEmails
+        : ['support@vvisa.in'];
+      const phones = (info && info.supportMobiles && info.supportMobiles.length > 0)
+        ? info.supportMobiles
+        : ['+91 8610648309'];
+
+      if (emailBox) {
+        emailBox.innerHTML = `<strong>Email:</strong> ${emails.join(', ')}`;
       }
-      if (phoneBox && info.supportMobiles) {
-        phoneBox.innerHTML = `<strong>Phone:</strong> ${info.supportMobiles.join(', ')}`;
+      if (phoneBox) {
+        phoneBox.innerHTML = `<strong>Phone:</strong> ${phones.join(', ')}`;
       }
       if (caseBox) {
         caseBox.textContent = `PAYMENT_ID: ${PAYMENT_ID}\nORDER_ID: ${state?.orderId || 'N/A'}\nAMOUNT: ₹${state?.amount || 'N/A'}\nSTATUS: ${state?.status || 'N/A'}`;
