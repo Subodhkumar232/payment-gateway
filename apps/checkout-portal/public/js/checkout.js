@@ -1915,13 +1915,24 @@
             });
           } catch (e) { }
 
+          const effectiveReturnUrl = data.returnUrl || state?.returnUrl || null;
           const btnReturn = document.getElementById('btnReturnStore') || document.getElementById('btnReturnToStore');
-          if (btnReturn && data.returnUrl) {
-            btnReturn.hidden = false;
-            btnReturn.href = data.returnUrl;
-            if (window.parent === window) {
-              const safeReturn = sanitizeRedirectUrl(data.returnUrl);
-              setTimeout(() => { if (safeReturn) window.location.href = safeReturn; }, 2000);
+          if (effectiveReturnUrl) {
+            const safeReturn = sanitizeRedirectUrl(effectiveReturnUrl);
+            if (safeReturn) {
+              if (btnReturn) {
+                btnReturn.hidden = false;
+                btnReturn.href = safeReturn;
+                btnReturn.textContent = 'Return to Store (Redirecting in 2s...)';
+              }
+              if (descEl && !descEl.textContent.includes('Redirecting')) {
+                descEl.textContent += ' Redirecting to merchant store...';
+              }
+              if (window.parent === window) {
+                setTimeout(() => { window.location.href = safeReturn; }, 2000);
+              }
+            } else if (btnReturn) {
+              btnReturn.hidden = true;
             }
           } else if (btnReturn) {
             btnReturn.hidden = true;
