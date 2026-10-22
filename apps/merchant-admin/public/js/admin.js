@@ -24,50 +24,65 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
         .replace(/'/g, '&#039;');
     }
 
+    // Helper to escape HTML safely while preserving falsy values such as 0
+    function escapeHtmlValue(str) {
+      if (str === null || str === undefined) return '';
+      return escapeHtml(String(str));
+    }
+
+    // Escapes an attribute value that is delimited by double quotes.
+    // Single quotes are deliberately left alone: they cannot terminate the
+    // attribute, and the browser decodes entities before the inline handler
+    // runs, so escaping them here would not prevent a break-out anyway.
+    function escapeAttribute(str) {
+      return escapeHtmlValue(str)
+        .replace(/&#039;/g, "'")
+        .replace(/&quot;/g, '&quot;');
+    }
+
+    // Builds a JavaScript literal that is safe to place inside a double-quoted
+    // inline event handler attribute. Use instead of hand-written quotes:
+    //   onclick="confirmCounterPayment(${jsArg(id)}, ${jsArg(method)})"
+    function jsArg(value) {
+      const literal = JSON.stringify(value === null || value === undefined ? '' : String(value));
+      return escapeAttribute(literal);
+    }
+
     // --- REAL LIGHT / DARK THEME CONTROLLER ---
-    let manualThemeOverride = null;
+    const THEME_KEY = 'youpi-theme';
+    const themeMQ = window.matchMedia('(prefers-color-scheme: dark)');
 
-    function updateThemeForSection(sectionId) {
-      if (manualThemeOverride !== null) {
-        applyTheme(manualThemeOverride);
-        return;
-      }
-      // Automatically real dark mode in developer settings, bright white mode in operations & store settings
-      if (sectionId === 'developerHub') {
-        applyTheme('dark');
-      } else {
-        applyTheme('light');
-      }
+    function getThemePref() {
+      try {
+        const v = localStorage.getItem(THEME_KEY);
+        return v === 'light' || v === 'dark' ? v : 'system';
+      } catch (e) { return 'system'; }
     }
 
-    function applyTheme(theme) {
+    function applyTheme(pref) {
+      const theme = pref === 'system' ? (themeMQ.matches ? 'dark' : 'light') : pref;
       document.documentElement.setAttribute('data-theme', theme);
-      document.body.setAttribute('data-theme', theme);
-
-      const icon = document.getElementById('headerThemeIcon');
-      const text = document.getElementById('headerThemeText');
-      if (theme === 'dark') {
-        if (icon) icon.textContent = '🌙';
-        if (text) text.textContent = 'Real Dark';
-      } else {
-        if (icon) icon.textContent = '☀️';
-        if (text) text.textContent = 'Bright White';
-      }
+      document.querySelectorAll('[data-theme-pref]').forEach(b => {
+        const on = b.dataset.themePref === pref;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
     }
 
-    function toggleThemeManual() {
-      const current = document.documentElement.getAttribute('data-theme') || 'light';
-      const next = current === 'dark' ? 'light' : 'dark';
-      manualThemeOverride = next;
-      applyTheme(next);
-      showAdminToast(`Switched to ${next === 'dark' ? 'Real Dark Mode' : 'Bright White Mode'}`);
+    function setThemePref(pref) {
+      try {
+        if (pref === 'system') localStorage.removeItem(THEME_KEY);
+        else localStorage.setItem(THEME_KEY, pref);
+      } catch (e) {}
+      applyTheme(pref);
     }
+
+    themeMQ.addEventListener('change', () => { if (getThemePref() === 'system') applyTheme('system'); });
+    applyTheme(getThemePref());
 
     // --- NAVIGATION CONTROLLER: 3 HIGH-LEVEL SECTIONS ---
     function switchSection(sectionId, targetSubTab = null) {
       activeSection = sectionId;
-      manualThemeOverride = null; // Auto-switching restores when navigating tabs
-      updateThemeForSection(sectionId);
 
       // Sync URL hash without jumping
       try {
@@ -146,7 +161,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
       let defaultSub = targetSubTab || items[0].id;
       items.forEach(item => {
         const btn = document.createElement('button');
-        btn.className = `sub-nav-pill inline-flex items-center gap-2 py-1.5 px-4 rounded-full font-bold whitespace-nowrap text-xs border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-600 dark:text-slate-400 cursor-pointer transition-all hover:text-slate-900 dark:hover:text-white hover:border-slate-400 [&.active]:bg-blue-600 [&.active]:text-white [&.active]:border-blue-600 [&.active]:shadow-md [&.active]:shadow-blue-500/25 ${item.id === defaultSub ? 'active' : ''}`;
+        btn.className = `sub-nav-pill ${item.id === defaultSub ? 'active' : ''}`;
         btn.textContent = item.label;
         btn.onclick = () => switchSubView(sectionId, item.id);
         subNav.appendChild(btn);
@@ -253,10 +268,10 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
           <td>
             <div style="display:flex; gap:0.4rem;">
               ${!isRunning ? `
-                <button class="btn btn-success" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="startService('${s.id}')">▶ Start</button>
+                <button class="btn btn-success" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="startService(${jsArg(s.id)})">▶ Start</button>
               ` : `
-                <button class="btn btn-danger" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="stopService('${s.id}')">⏹ Stop</button>
-                <button class="btn btn-secondary" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="restartService('${s.id}')">🔄 Restart</button>
+                <button class="btn btn-danger" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="stopService(${jsArg(s.id)})">⏹ Stop</button>
+                <button class="btn btn-secondary" style="padding:0.3rem 0.65rem; font-size:0.75rem;" onclick="restartService(${jsArg(s.id)})">🔄 Restart</button>
               `}
               ${isRunning && s.port ? `
                 <a href="http://localhost:${s.port}" target="_blank" class="btn btn-secondary" style="padding:0.3rem 0.55rem; font-size:0.75rem; text-decoration:none;" title="Open in browser">↗</a>
@@ -382,6 +397,17 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
 
     /**
      * Opens an SSE stream with an Authorization header.
+     *
+     * EventSource cannot send request headers, which is why the admin token used to be
+     * passed as a `?token=` query parameter. That put a credential with write access into
+     * the URL, so it landed in access logs, browser history and Referer headers. This uses
+     * fetch() with a streaming body instead and keeps the token in the header only.
+     *
+     * @param {string} url
+     * @param {string} token
+     * @param {(event: string, data: string) => void} onEvent
+     * @param {() => void} onError
+     * @returns {{ close: () => void }}
      */
     function openAuthenticatedEventStream(url, token, onEvent, onError) {
       const controller = new AbortController();
@@ -435,6 +461,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
         }
       };
 
+      // Minimal EventSource-compatible surface so existing call sites keep working.
       const apiSse = {
         addEventListener(type, handler) {
           if (!listeners.has(type)) listeners.set(type, []);
@@ -603,7 +630,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
         const s = remainingSec % 60;
         content.innerHTML = `
         <div style="font-size:1.75rem; font-weight:800; color:#38bdf8;">₹${(Number(currentSlot.amountPaise) / 100).toFixed(2)}</div>
-        <div style="font-weight:700; margin:0.35rem 0;">Order #${currentSlot.orderId}</div>
+        <div style="font-weight:700; margin:0.35rem 0;">Order #${escapeHtml(currentSlot.orderId)}</div>
         <div class="badge badge-info">ACTIVE (⏱ ${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')} remaining)</div>
       `;
       } else {
@@ -622,7 +649,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
         const remainingSec = currentSlot.processingExpiresAt ? Math.max(0, Math.ceil((new Date(currentSlot.processingExpiresAt).getTime() - Date.now()) / 1000)) : 0;
         content.innerHTML = `
         <div style="font-size:1.75rem; font-weight:800; color:#fbbf24;">₹${(Number(currentSlot.amountPaise) / 100).toFixed(2)}</div>
-        <div style="font-weight:700; margin:0.35rem 0;">Order #${currentSlot.orderId}</div>
+        <div style="font-weight:700; margin:0.35rem 0;">Order #${escapeHtml(currentSlot.orderId)}</div>
         <div class="badge badge-warning">VERIFYING (⏳ ${remainingSec}s remaining)</div>
       `;
       } else {
@@ -641,10 +668,10 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
       tbody.innerHTML = queue.map(q => `
       <tr>
         <td><strong>#${q.queuePosition}</strong></td>
-        <td>Order #${q.orderId}</td>
+        <td>Order #${escapeHtml(q.orderId)}</td>
         <td>₹${(Number(q.amountPaise) / 100).toFixed(2)}</td>
         <td><span class="badge badge-warning">QUEUED</span></td>
-        <td>${new Date(q.createdAt).toLocaleTimeString()}</td>
+        <td>${escapeHtmlValue(new Date(q.createdAt).toLocaleTimeString())}</td>
       </tr>
     `).join('');
     }
@@ -720,7 +747,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
 
       tbody.innerHTML = pending.map(p => `
       <tr>
-        <td><strong>Order #${p.orderId}</strong></td>
+        <td><strong>Order #${escapeHtml(p.orderId)}</strong></td>
         <td><code style="font-size:0.75rem;">${p.id.substring(0, 16)}...</code></td>
         <td><strong style="color:#34d399; font-size:1.15rem;">₹${(Number(p.amountPaise) / 100).toFixed(2)}</strong></td>
         <td>
@@ -731,8 +758,8 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
         <td>${new Date(p.createdAt).toLocaleTimeString()}</td>
         <td>
           <div style="display:flex; gap:0.4rem;">
-            <button class="btn btn-success" style="padding:0.35rem 0.75rem; font-size:0.78rem;" onclick="confirmCounterPayment('${p.id}', '${p.method}')">✓ Approve</button>
-            <button class="btn btn-danger" style="padding:0.35rem 0.75rem; font-size:0.78rem;" onclick="declineCounterPayment('${p.id}', '${p.method}')">✕ Decline</button>
+            <button class="btn btn-success" style="padding:0.35rem 0.75rem; font-size:0.78rem;" onclick="confirmCounterPayment(${jsArg(p.id)}, ${jsArg(p.method)})">✓ Approve</button>
+            <button class="btn btn-danger" style="padding:0.35rem 0.75rem; font-size:0.78rem;" onclick="declineCounterPayment(${jsArg(p.id)}, ${jsArg(p.method)})">✕ Decline</button>
           </div>
         </td>
       </tr>
@@ -798,21 +825,42 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
         }
         tbody.innerHTML = orders.map(o => `
         <tr>
-          <td><strong>Order #${o.orderId}</strong></td>
+          <td><strong>Order #${escapeHtml(o.orderId)}</strong></td>
           <td><code style="font-size:0.75rem;">${o.paymentId.substring(0, 16)}...</code></td>
           <td><strong style="color:#34d399; font-size:1.15rem;">₹${(Number(o.amountPaise) / 100).toFixed(2)}</strong></td>
           <td>${escapeHtml(o.customerName || 'Customer')}</td>
           <td>${escapeHtml(o.customerPhone || '-')}</td>
           <td>${new Date(o.placedAt).toLocaleTimeString()}</td>
           <td>
-            <a href="${API_BASE}/api/v1/orders/${o.orderId}/cod" target="_blank" class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.75rem; text-decoration:none;">
+            <button type="button" data-cod-order="${escapeHtml(o.orderId)}" class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.75rem;">
               API ↗
-            </a>
+            </button>
           </td>
         </tr>
       `).join('');
       } catch (e) { }
     }
+
+    // The COD order API only returns the customer to an authenticated caller, and a plain
+    // link would navigate without the admin token (authedFetch only covers /admin/ routes),
+    // so fetch it with the bearer and show the JSON in a new tab.
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-cod-order]');
+      if (!btn) return;
+      const tab = window.open('', '_blank');
+      try {
+        await window.__youpiAdminAuth.ensure();
+        const res = await fetch(`${API_BASE}/api/v1/orders/${encodeURIComponent(btn.dataset.codOrder)}/cod`, {
+          headers: { Authorization: 'Bearer ' + window.__youpiAdminAuth.token() }
+        });
+        const body = JSON.stringify(await res.json(), null, 2);
+        const url = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
+        if (tab) tab.location.href = url; else window.open(url, '_blank');
+      } catch (err) {
+        if (tab) tab.close();
+        alert('Could not load the COD order details.');
+      }
+    });
 
     // --- TRANSACTIONS LEDGER ---
     async function fetchPaymentsLedger() {
@@ -825,29 +873,29 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
         tbody.innerHTML = (data.payments || []).map(p => {
           let verifyBadge = '<span style="color:var(--text-muted); font-size:0.75rem;">-</span>';
           if (p.status === 'SUCCESS') {
-            const tag = p.verificationTag || (p.verificationLevel >= 2 ? 'Dual Verification' : 'Single Verification');
-            if (p.verificationLevel >= 2) {
-              verifyBadge = `<span class="badge badge-success">✓✓ ${tag}</span>`;
-            } else {
-              verifyBadge = `<span class="badge badge-info">✓ ${tag}</span>`;
-            }
+          const tag = p.verificationTag || (p.verificationLevel >= 2 ? 'Dual Verification' : 'Single Verification');
+          if (p.verificationLevel >= 2) {
+            verifyBadge = `<span class="badge badge-success">✓✓ ${escapeHtmlValue(tag)}</span>`;
+          } else {
+            verifyBadge = `<span class="badge badge-info">✓ ${escapeHtmlValue(tag)}</span>`;
           }
+        }
 
           const sourcesChips = (p.verificationSources && p.verificationSources.length > 0)
-            ? p.verificationSources.map(s => `<code style="font-size:0.7rem; background:#0f172a; padding:0.15rem 0.35rem; border-radius:0.25rem; margin-right:0.2rem; border:1px solid var(--border); color:#93c5fd;">${s === 'GOOGLE_MESSAGES' ? 'SMS' : s}</code>`).join('')
+            ? p.verificationSources.map(s => `<code style="font-size:0.7rem; background:#0f172a; padding:0.15rem 0.35rem; border-radius:0.25rem; margin-right:0.2rem; border:1px solid var(--border); color:#93c5fd;">${s === 'GOOGLE_MESSAGES' ? 'SMS' : escapeHtmlValue(s)}</code>`).join('')
             : '<span style="color:var(--text-muted); font-size:0.75rem;">-</span>';
 
           return `
           <tr>
-            <td><strong>Order #${p.orderId}</strong></td>
+            <td><strong>Order #${escapeHtml(p.orderId)}</strong></td>
             <td><code>${p.id}</code></td>
             <td>₹${(Number(p.amountPaise) / 100).toFixed(2)}</td>
-            <td>${p.method}</td>
-            <td><span class="badge ${p.status === 'SUCCESS' ? 'badge-success' : (p.status === 'ACTIVE' ? 'badge-info' : 'badge-danger')}">${p.status}</span></td>
+            <td>${escapeHtmlValue(p.method)}</td>
+            <td><span class="badge ${p.status === 'SUCCESS' ? 'badge-success' : (p.status === 'ACTIVE' ? 'badge-info' : 'badge-danger')}">${escapeHtmlValue(p.status)}</span></td>
             <td>${verifyBadge}</td>
             <td>${sourcesChips}</td>
-            <td>${new Date(p.createdAt).toLocaleTimeString()}</td>
-            <td>${p.completedAt ? new Date(p.completedAt).toLocaleTimeString() : '-'}</td>
+            <td>${escapeHtmlValue(new Date(p.createdAt).toLocaleTimeString())}</td>
+            <td>${p.completedAt ? escapeHtmlValue(new Date(p.completedAt).toLocaleTimeString()) : '-'}</td>
           </tr>
         `;
         }).join('');
@@ -1101,16 +1149,16 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
 
         let actionBtns = '';
         if (!a.isActive) {
-          actionBtns += `<button class="btn btn-primary" style="padding:0.35rem 0.65rem; font-size:0.78rem; margin-right:0.4rem;" onclick="activateVpa('${a.id}')">Activate</button>`;
+          actionBtns += `<button class="btn btn-primary" style="padding:0.35rem 0.65rem; font-size:0.78rem; margin-right:0.4rem;" onclick="activateVpa(${jsArg(a.id)})">Activate</button>`;
         } else {
-          actionBtns += `<button class="btn btn-secondary" style="padding:0.35rem 0.65rem; font-size:0.78rem; margin-right:0.4rem;" onclick="toggleVpa('${a.id}')">Deactivate</button>`;
+          actionBtns += `<button class="btn btn-secondary" style="padding:0.35rem 0.65rem; font-size:0.78rem; margin-right:0.4rem;" onclick="toggleVpa(${jsArg(a.id)})">Deactivate</button>`;
         }
-        actionBtns += `<button class="btn btn-danger" style="padding:0.35rem 0.65rem; font-size:0.78rem;" onclick="deleteVpa('${a.id}', '${a.upiId}')">Delete</button>`;
+        actionBtns += `<button class="btn btn-danger" style="padding:0.35rem 0.65rem; font-size:0.78rem;" onclick="deleteVpa(${jsArg(a.id)}, ${jsArg(a.upiId)})">Delete</button>`;
 
         return `
         <tr style="${a.isActive ? 'background:var(--primary-light);' : ''}">
-          <td><strong style="color:var(--text-heading);">${a.upiId}</strong></td>
-          <td>${a.payeeName}</td>
+          <td><strong style="color:var(--text-heading);">${escapeHtml(a.upiId)}</strong></td>
+          <td>${escapeHtml(a.payeeName)}</td>
           <td>${statusBadge}</td>
           <td>${slotBadge}</td>
           <td style="font-size:0.75rem; color:var(--text-muted);">${new Date(a.createdAt).toLocaleDateString()}</td>
@@ -1400,8 +1448,8 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
           </div>
         </div>
         <div style="display:flex; gap:0.5rem;">
-          <button class="btn btn-secondary" style="font-size:0.75rem;" onclick="copyText('${escapeHtml(r.hostname || '')}', 'Hostname copied to clipboard!')" ${!r.hostname ? 'disabled' : ''}>📋 Copy Hostname</button>
-          <button class="btn btn-secondary" style="font-size:0.75rem;" onclick="copyText('${escapeHtml(r.serviceUrl)}', 'Service URL copied to clipboard!')">📋 Copy Service URL</button>
+          <button class="btn btn-secondary" style="font-size:0.75rem;" onclick="copyText(${jsArg(r.hostname || '')}, 'Hostname copied to clipboard!')" ${!r.hostname ? 'disabled' : ''}>📋 Copy Hostname</button>
+          <button class="btn btn-secondary" style="font-size:0.75rem;" onclick="copyText(${jsArg(r.serviceUrl)}, 'Service URL copied to clipboard!')">📋 Copy Service URL</button>
         </div>
       </div>
     `).join('');
@@ -1637,7 +1685,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
           <td><code style="font-size:0.75rem; color:#38bdf8;">${escapeHtml(id)}</code></td>
           <td><span style="font-size:0.75rem; color:var(--text-muted);">${timeStr}</span></td>
           <td>
-            <button class="btn btn-danger" style="padding:0.25rem 0.6rem; font-size:0.72rem;" onclick="unpairSmsDevice('${escapeHtml(id)}')">Unpair</button>
+            <button class="btn btn-danger" style="padding:0.25rem 0.6rem; font-size:0.72rem;" onclick="unpairSmsDevice(${jsArg(id)})">Unpair</button>
           </td>
         </tr>
       `;
@@ -1722,7 +1770,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
 
     // --- GMAIL DIRECT API & AUTOMATED GOOGLE LOGIN ---
     function copyGmailRedirectUri() {
-      const uri = document.getElementById('gmailRedirectUriInput')?.value || (window.location.origin + '/oauth/callback');
+      const uri = document.getElementById('gmailRedirectUriInput')?.value || 'http://localhost:6003/oauth/callback';
       navigator.clipboard.writeText(uri).then(() => {
         showAdminToast('Redirect URI copied to clipboard!');
       });
@@ -1778,9 +1826,11 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
         };
 
         const onMessage = (event) => {
-          if (event.data && event.data.type === 'GMAIL_OAUTH_SUCCESS') {
-            cleanup(event.data.email);
-          }
+          if (!event.data || event.data.type !== 'GMAIL_OAUTH_SUCCESS') return;
+          // Only the OAuth popup we opened may report a successful link.
+          if (event.source !== googleAuthPopup) return;
+          if (event.origin !== window.location.origin) return;
+          cleanup(event.data.email);
         };
         window.addEventListener('message', onMessage);
 
@@ -1852,7 +1902,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
         if (document.getElementById('gmailClientSecretInput')) document.getElementById('gmailClientSecretInput').value = cfg.clientSecret || data.clientSecret || '';
         if (document.getElementById('gmailRefreshTokenInput')) document.getElementById('gmailRefreshTokenInput').value = cfg.refreshToken || '';
 
-        const redirectUri = data.redirectUri || (window.location.origin + '/oauth/callback');
+        const redirectUri = data.redirectUri || 'http://localhost:6003/oauth/callback';
         if (document.getElementById('gmailRedirectUriInput')) document.getElementById('gmailRedirectUriInput').value = redirectUri;
         if (document.getElementById('guideProdUri')) document.getElementById('guideProdUri').textContent = redirectUri;
 
@@ -2139,39 +2189,39 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
 
     function connectAdminEventsSse() {
       try {
-        const adminToken = window.__youpiAdminAuth ? window.__youpiAdminAuth.token() : '';
-        if (!adminToken) return;
+        const adminToken = window.__youpiAdminAuth.token();
+        if (!adminToken) return; // reconnected right after the token is entered
         if (window.__adminSse) { try { window.__adminSse.close(); } catch (e) {} }
         const adminSse = window.__adminSse = openAuthenticatedEventStream(
           `${API_BASE}/api/v1/admin/stream`,
           adminToken,
           (eventName, data) => {
-            if (eventName === 'counter_payment_requested') {
-              const event = { data };
-              pollGlobalCounterPending();
-              fetchLiveData();
-              if (typeof fetchCounterPayments === 'function') fetchCounterPayments();
-              try {
-                const payload = event.data ? JSON.parse(event.data) : null;
-                const isCash = payload?.method === 'CASH_COUNTER';
-                const amt = payload?.amountPaise ? `₹${(Number(payload.amountPaise) / 100).toFixed(2)}` : '';
-                const ord = payload?.orderId ? `(Order #${payload.orderId})` : '';
-                showAdminToast(`🔔 Cashier Prompt: Customer requested ${isCash ? '💵 Cash at Till' : '💳 Card at POS'} ${amt} ${ord}!`);
-              } catch (e) {
-                showAdminToast('🔔 Cashier Prompt: In-store customer selected Cash/Card payment!');
-              }
-            } else if (eventName === 'status_change') {
-              pollGlobalCounterPending();
-              fetchLiveData();
-              if (typeof fetchCounterPayments === 'function') fetchCounterPayments();
+            if (eventName !== 'counter_payment_requested') return;
+            const event = { data };
+            pollGlobalCounterPending();
+            fetchLiveData();
+            if (typeof fetchCounterPayments === 'function') fetchCounterPayments();
+            try {
+              const payload = event.data ? JSON.parse(event.data) : null;
+              const isCash = payload?.method === 'CASH_COUNTER';
+              const amt = (payload?.amountPaise) ? `₹${(Number(payload.amountPaise) / 100).toFixed(2)}` : '';
+              const ord = (payload?.orderId) ? `(Order #${payload.orderId})` : '';
+              showAdminToast(`🔔 Cashier Prompt: Customer requested ${isCash ? '💵 Cash at Till' : '💳 Card at POS'} ${amt} ${ord}!`);
+            } catch (e) {
+              showAdminToast('🔔 Cashier Prompt: In-store customer selected Cash/Card payment!');
             }
           },
-          () => {
-            if (window.__adminSse) { try { window.__adminSse.close(); } catch (e) {} }
-            window.__adminSse = null;
-            setTimeout(connectAdminEventsSse, 3000);
-          }
+          () => { /* the caller reconnects */ }
         );
+        adminSse.addEventListener('status_change', () => {
+          pollGlobalCounterPending();
+          fetchLiveData();
+          if (typeof fetchCounterPayments === 'function') fetchCounterPayments();
+        });
+        adminSse.onerror = () => {
+          adminSse.close();
+          setTimeout(connectAdminEventsSse, 3000);
+        };
       } catch (e) { }
     }
 
@@ -2205,12 +2255,12 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
             <div class="cashier-modal-header">
               <div style="display:flex; align-items:center; gap:6px;">
                 <span class="cashier-modal-badge ${badgeClass}">${methodLabel}</span>
-                <strong style="color:#ffffff; font-size:12px; font-family:monospace;">${orderIdStr}</strong>
-                <span style="color:#f59e0b; font-size:12px; font-weight:700;">${amountStr}</span>
+                <strong style="color:#ffffff; font-size:12px; font-family:monospace;">${escapeHtmlValue(orderIdStr)}</strong>
+                <span style="color:#f59e0b; font-size:12px; font-weight:700;">${escapeHtmlValue(amountStr)}</span>
               </div>
               <div style="display:flex; align-items:center; gap:4px;">
-                <button type="button" class="cashier-btn-minimize" onclick="toggleMinimizeCard('${p.id}')">▲</button>
-                <button type="button" class="cashier-btn-accept" style="padding:4px 8px; font-size:11px;" onclick="confirmCounterPayment('${p.id}', '${p.method}')">✓ Accept</button>
+                <button type="button" class="cashier-btn-minimize" onclick="toggleMinimizeCard(${jsArg(p.id)})">▲</button>
+                <button type="button" class="cashier-btn-accept" style="padding:4px 8px; font-size:11px;" onclick="confirmCounterPayment(${jsArg(p.id)}, ${jsArg(p.method)})">✓ Accept</button>
               </div>
             </div>
           </div>
@@ -2222,24 +2272,24 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
           <div class="cashier-modal-header">
             <div style="display:flex; align-items:center; gap:8px;">
               <span class="cashier-modal-badge ${badgeClass}">${methodLabel}</span>
-              <strong style="color:#ffffff; font-size:13px; font-family:monospace;">${orderIdStr}</strong>
+              <strong style="color:#ffffff; font-size:13px; font-family:monospace;">${escapeHtmlValue(orderIdStr)}</strong>
             </div>
-            <button type="button" class="cashier-btn-minimize" onclick="toggleMinimizeCard('${p.id}')">—</button>
+            <button type="button" class="cashier-btn-minimize" onclick="toggleMinimizeCard(${jsArg(p.id)})">—</button>
           </div>
           <div class="cashier-modal-body">
             <div class="cashier-modal-amount-row">
               <div>
                 <div style="font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Payable at Desk</div>
-                <div style="font-size:1.35rem; font-weight:900; color:${isCash ? '#22c55e' : '#38bdf8'};">${amountStr}</div>
+                <div style="font-size:1.35rem; font-weight:900; color:${isCash ? '#22c55e' : '#38bdf8'};">${escapeHtmlValue(amountStr)}</div>
               </div>
               <div style="text-align:right;">
-                <div style="font-size:11px; color:var(--text-muted);">${customerText}</div>
+                <div style="font-size:11px; color:var(--text-muted);">${escapeHtmlValue(customerText)}</div>
                 <div style="font-size:11px; color:#64748b; margin-top:2px;">Requested at counter</div>
               </div>
             </div>
             <div class="cashier-modal-actions">
-              <button type="button" class="cashier-btn-accept" onclick="confirmCounterPayment('${p.id}', '${p.method}')">✓ Confirm &amp; Accept</button>
-              <button type="button" class="cashier-btn-decline" onclick="declineCounterPayment('${p.id}', '${p.method}')">✕ Decline</button>
+              <button type="button" class="cashier-btn-accept" onclick="confirmCounterPayment(${jsArg(p.id)}, ${jsArg(p.method)})">✓ Confirm &amp; Accept</button>
+              <button type="button" class="cashier-btn-decline" onclick="declineCounterPayment(${jsArg(p.id)}, ${jsArg(p.method)})">✕ Decline</button>
             </div>
           </div>
         </div>
@@ -2952,10 +3002,10 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
           else if (s.status === 'CANCELLED' || s.status === 'EXPIRED' || s.status === 'FAILED') { badgeColor = '#ffffff'; badgeBg = '#ef4444'; }
 
           return `
-          <div class="sim-session-row" onclick="simPickSession('${s.id}')" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:0.5rem 0.65rem; border-radius:6px; margin-bottom:0.35rem; background:#0f172a; border:1px solid #1e293b; transition:all 0.15s ease;" id="simSessItem_${s.id}">
+          <div class="sim-session-row" onclick="simPickSession(${jsArg(s.id)})" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:0.5rem 0.65rem; border-radius:6px; margin-bottom:0.35rem; background:#0f172a; border:1px solid #1e293b; transition:all 0.15s ease;" id="simSessItem_${escapeAttribute(s.id)}">
             <div>
               <div style="display:flex; align-items:center; gap:0.4rem;">
-                <input type="radio" name="simSessionRadio" id="radio_${s.id}" style="accent-color:#3b82f6; cursor:pointer;" />
+                <input type="radio" name="simSessionRadio" id="radio_${s.id}" style="accent-color:var(--primary); cursor:pointer;" />
                 <strong style="color:#f8fafc; font-size:0.84rem; font-family:monospace;">${escapeHtml(s.id.slice(0, 14))}...</strong>
                 <span style="color:#94a3b8; font-size:0.78rem;">#${escapeHtml(s.orderId)}</span>
               </div>
@@ -3003,8 +3053,8 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
       });
       const item = document.getElementById(`simSessItem_${sessionId}`);
       if (item) {
-        item.style.borderColor = '#3b82f6';
-        item.style.background = 'rgba(59,130,246,0.12)';
+        item.style.borderColor = 'var(--primary)';
+        item.style.background = 'rgba(20,184,166,0.12)';
       }
       const radio = document.getElementById(`radio_${sessionId}`);
       if (radio) radio.checked = true;
@@ -3349,8 +3399,8 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
           <td><span class="badge badge-info" style="font-size:0.7rem;">${escapeHtml(u.source || 'SMS')}</span></td>
           <td style="text-align:right;">
             <div style="display:inline-flex; gap:0.4rem;">
-              <button class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="viewBanDetails('${u.id}')">🔍 Details</button>
-              <button class="btn btn-success" style="padding:0.3rem 0.6rem; font-size:0.75rem; background:#059669; border-color:#059669;" onclick="promptUnbanCustomer('${u.id}', '${escapeHtml(u.name || '')}', '${escapeHtml(u.phone || u.mobileNumber || '')}')">🔓 Unban</button>
+              <button class="btn btn-secondary" style="padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="viewBanDetails(${jsArg(u.id)})">🔍 Details</button>
+              <button class="btn btn-success" style="padding:0.3rem 0.6rem; font-size:0.75rem; background:#059669; border-color:#059669;" onclick="promptUnbanCustomer(${jsArg(u.id)}, ${jsArg(u.name || '')}, ${jsArg(u.phone || u.mobileNumber || '')})">🔓 Unban</button>
             </div>
           </td>
         </tr>
@@ -3686,7 +3736,7 @@ const API_BASE = (typeof window !== 'undefined' && window.API_BASE !== undefined
             <td style="color:#f87171; font-size:0.8rem;">${escapeHtml(e.fraudReason || '-')}</td>
             <td><code style="color:#fca5a5; font-size:0.75rem; background:#020617; padding:2px 6px; border-radius:4px;">${escapeHtml(rawSnippet)}</code></td>
             <td style="text-align:right;">
-              ${e.customerId ? `<button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="viewBanDetails('${e.customerId}')">View Dossier</button>` : '-'}
+              ${e.customerId ? `<button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="viewBanDetails(${jsArg(e.customerId)})">View Dossier</button>` : '-'}
             </td>
           </tr>
         `;
