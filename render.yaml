@@ -5,7 +5,7 @@ services:
     runtime: node
     plan: free
     buildCommand: npm ci
-    startCommand: npm run start:prod:api
+    startCommand: node scripts/start-render-demo.js
     healthCheckPath: /health
 
     envVars:
