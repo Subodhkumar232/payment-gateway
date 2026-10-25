@@ -129,7 +129,7 @@ export function runMigrations(targetDb) {
       slug: 'demo-store',
       contactEmail: 'merchant@youpi.local',
       contactPhone: '9876543210',
-      webhookUrl: process.env.COIN_STORE_WEBHOOK_URL || 'http://localhost:5000/api/webhook',
+      webhookUrl: process.env.MERCHANT_WEBHOOK_URL || process.env.COIN_STORE_WEBHOOK_URL || 'http://localhost:8000/payments/youpi/webhook',
       webhookSecret: getCoinStoreWebhookSecret(),
       branding: {
         appName: 'YOUPI PG',
@@ -141,7 +141,7 @@ export function runMigrations(targetDb) {
     defaultMerchant = existing[0];
     if (!defaultMerchant.webhookSecret) {
       merchantRepo.update(defaultMerchant.id, {
-        webhookUrl: 'http://localhost:5000/api/webhook',
+        webhookUrl: process.env.MERCHANT_WEBHOOK_URL || 'http://localhost:8000/payments/youpi/webhook',
         webhookSecret: getCoinStoreWebhookSecret()
       });
     } else if (defaultMerchant.webhookSecret === LEGACY_DEFAULT_WEBHOOK_SECRET) {

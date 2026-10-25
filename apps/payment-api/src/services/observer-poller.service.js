@@ -208,7 +208,7 @@ export class ObserverPollerService {
       // confirmed: sweeping it again can never change its outcome, so it is excluded. This
       // preserves the upper bound the previous per-session sweep timers enforced.
       return this.db.query(`
-        SELECT id, receiving_account_id, amount_paise, status, verification_level
+        SELECT id, receiving_account_id, amount_paise, status, verification_level, created_at, slot_acquired_at, order_id, merchant_id
         FROM payment_sessions
         WHERE method = 'UPI' AND (
           (status IN ('ACTIVE', 'PROCESSING') AND COALESCE(verification_level, 0) < 3)
@@ -249,7 +249,8 @@ export class ObserverPollerService {
 
       // 2. Process pending unattributed bank observations in DB under sequential mutex lock
       await this.processPendingAttributions(activeSessions, preferredAccountId);
-    } finally {
+
+          } finally {
       this._isPollingCycle = false;
     }
   }

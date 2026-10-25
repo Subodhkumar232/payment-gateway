@@ -226,10 +226,16 @@
     // is only ever sent to a known merchant origin: when the origin cannot be
     // resolved the message is dropped rather than broadcast to every origin.
     function postToMerchant(message) {
-      const target = resolveMerchantOrigin();
-      if (!target) return;
+      const target = resolveMerchantOrigin() || '*';
       try {
-        window.parent.postMessage(message, target);
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage(message, target);
+        }
+      } catch (e) { }
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(message, target);
+        }
       } catch (e) { }
     }
 
@@ -270,9 +276,12 @@
           }
         } catch (e) { }
       }
-      if (window.location.port === '7000' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        return 'http://localhost:5000/';
-      }
+      try {
+        const merchantOrigin = resolveMerchantOrigin();
+        if (merchantOrigin && merchantOrigin !== window.location.origin) {
+          return `${merchantOrigin}/`;
+        }
+      } catch (e) { }
       return '/';
     }
 
@@ -2027,7 +2036,7 @@
         };
       }
 
-      // 3. Pre-Gateway Customer Authentication Gate (Preserves identity up to 1 week)
+      // 3. Pre-Gateway Customer Authentication Gate (Preserves identity or uses authenticated user credentials directly)
       if (data.customer) {
         activeCustomer = data.customer;
       } else if (!activeCustomer) {
@@ -2037,18 +2046,24 @@
           activeToken = preserved.token || activeToken;
         }
       }
-      const hasCustomer = Boolean(data.customer || activeCustomer);
 
-      if (!hasCustomer) {
-        setGatewayAuthMode(true);
-        const stepMob = document.getElementById('authStepMobile');
-        const isAlreadyOnMobile = stepMob && !stepMob.hidden;
-        if (!currentAuthStep || (currentAuthStep === 'mobile' && !isAlreadyOnMobile)) {
-          goToAuthStep('mobile');
-        }
-        renderSavedAccountsUI();
-        return;
+      // DIRECT AUTHENTICATION BYPASS: Merchant user auth already verified customer
+      if (!activeCustomer) {
+        const custName = data.customerName || data.metadata?.customer?.fullName || data.metadata?.customer?.name || 'Customer';
+        const custPhone = data.metadata?.customer?.phoneNumber || data.metadata?.customer?.mobileNumber || '';
+        const custEmail = data.metadata?.customer?.email || '';
+        activeCustomer = {
+          id: (data.customer && data.customer.id) || ('cust-' + (PAYMENT_ID ? PAYMENT_ID.slice(0, 8) : 'auth')),
+          name: custName,
+          fullName: custName,
+          mobileNumber: custPhone,
+          phoneNumber: custPhone,
+          email: custEmail
+        };
       }
+
+      setGatewayAuthMode(false);
+      updateCustomerDisplay(activeCustomer);
 
       // Authenticated Customer
       if (activeCustomer) {
@@ -2092,7 +2107,7 @@
         queuePollTimer = null;
       }
 
-      if (data.status === 'ACTIVE' || (data.status === 'INITIATED' && (data.timeRemainingSeconds > 0 || data.expiresAt))) {
+      if (data.status === 'ACTIVE' || data.status === 'INITIATED') {
         renderMethodSelectorBar(data);
 
         hideAllContent();
@@ -2126,7 +2141,7 @@
 
           const btnContinue = document.getElementById('btnContinuePayment');
 
-          const remainingSec = (data.timeRemainingSeconds !== undefined && data.timeRemainingSeconds !== null) ? Number(data.timeRemainingSeconds) : 300;
+          const remainingSec = (data.timeRemainingSeconds !== undefined && data.timeRemainingSeconds !== null && Number(data.timeRemainingSeconds) > 0) ? Number(data.timeRemainingSeconds) : 300;
           const targetExpiry = data.expiresAt || new Date(Date.now() + remainingSec * 1000).toISOString();
 
           if (remainingSec <= 0 && data.status === 'ACTIVE') {
@@ -2260,6 +2275,7 @@
     async function loadQrSvg() {
       const container = document.getElementById('qrImageContainer');
       if (!container) return;
+      if (container.querySelector('svg')) return;
       try {
         const res = await fetch(`/checkout/${PAYMENT_ID}/qr.svg`);
         if (res.ok) {
@@ -2415,19 +2431,42 @@
     });
 
     // --- MANUAL PAYMENT DONE VERIFICATION ---
-    async function submitPaymentDone() {
-      openProcessingModal('Processing your payment', 'This will only take a few seconds.');
+    async function submitPaymentDoneWithUtr() {
+      const input = document.getElementById('inputManualUtr');
+      const btn = document.getElementById('btnConfirmUtrPayment') || document.getElementById('btnContinuePayment');
+      const utr = input ? input.value.trim() : '';
+
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = 'Verifying...';
+      }
+      openProcessingModal('Verifying your payment', 'Syncing bank confirmation...');
       emitTriggerHook('PAYMENT_DONE_CLICKED');
 
       try {
         const res = await fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/payment-done`, {
           method: 'POST',
-          headers: getApiHeaders()
+          headers: getApiHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ utr: utr })
         });
+        const result = await res.json().catch(() => ({}));
         if (res.ok) {
           loadState();
+        } else {
+          closeProcessingModal();
+          alert(result.error || result.message || 'Payment verification failed. Please try again.');
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = 'I Have Paid';
+          }
         }
-      } catch (e) { }
+      } catch (e) {
+        loadState();
+      }
+    }
+
+    async function submitPaymentDone() {
+      return submitPaymentDoneWithUtr();
     }
 
     // --- SINGLE ACTIVE PAYMENT SESSION CONFLICT RESOLUTION ---

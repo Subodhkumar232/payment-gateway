@@ -230,6 +230,10 @@ export function registerPaymentRoutes(server, ctx) {
         }
 
         // CASE 2: Active session + Same device -> CONTINUE ACTIVE SESSION
+        const currentActiveAcc = ctx.accountRepo.findActiveForMerchant(merchant.id);
+        if (currentActiveAcc && existing.receivingAccountId !== currentActiveAcc.id) {
+          ctx.db.execute('UPDATE payment_sessions SET receiving_account_id = ? WHERE id = ?', [currentActiveAcc.id, existing.id]);
+        }
         HttpServer.json(res, 200, {
           paymentId: existing.id,
           orderId: existing.orderId,
@@ -268,11 +272,34 @@ export function registerPaymentRoutes(server, ctx) {
       };
     }
 
-    // Resolve customer if provided (optional pre-existing customer)
+    // Resolve customer if provided (optional pre-existing customer or authenticated merchant user)
     let customerId = body.customerId || null;
-    if (!customerId && (body.customer?.mobileNumber || body.customer?.phoneNumber || body.customer?.email) && ctx.customerRepo) {
-      const ident = body.customer.email || body.customer.mobileNumber || body.customer.phoneNumber;
-      const existingCust = ctx.customerRepo.findByIdentifier(ident);
+    if (body.customer && ctx.customerRepo) {
+      const phone = body.customer.mobileNumber || body.customer.phoneNumber;
+      const email = body.customer.email;
+      let existingCust = null;
+      if (phone && ctx.customerRepo.findByMobile) {
+        existingCust = ctx.customerRepo.findByMobile(phone);
+      }
+      if (!existingCust && email && ctx.customerRepo.findByEmail) {
+        existingCust = ctx.customerRepo.findByEmail(email);
+      }
+      if (!existingCust && ctx.customerRepo.findByIdentifier) {
+        existingCust = ctx.customerRepo.findByIdentifier(phone || email);
+      }
+      if (!existingCust && ctx.customerRepo.create) {
+        try {
+          existingCust = ctx.customerRepo.create({
+            fullName: body.customer.fullName || body.customer.name || 'Customer',
+            email: email || null,
+            mobileNumber: phone || null,
+            isVerified: true
+          });
+        } catch (e) {
+          if (phone && ctx.customerRepo.findByMobile) existingCust = ctx.customerRepo.findByMobile(phone);
+          if (!existingCust && email && ctx.customerRepo.findByEmail) existingCust = ctx.customerRepo.findByEmail(email);
+        }
+      }
       if (existingCust) {
         customerId = existingCust.id;
       }
@@ -316,12 +343,14 @@ export function registerPaymentRoutes(server, ctx) {
     // Digital UPI payments MUST ALWAYS start in status INITIATED without acquiring a concurrency slot or timer.
     // Only physical counter payments (CASH_COUNTER, CARD_COUNTER) start as ACTIVE (they do not use UPI slots).
     // The only exception for UPI auto-activation is explicit developer test suite flag: body.autoActivate === true.
-    const shouldActivateNow = isCounterPayment || isExplicitTestAutoActivate;
+    const hasDirectAuth = Boolean(body.customer || body.autoActivate || customerId);
+    const shouldActivateNow = isCounterPayment || isExplicitTestAutoActivate || hasDirectAuth;
     const initialStatus = isCounterPayment ? PaymentStatus.ACTIVE : PaymentStatus.INITIATED;
 
     const sessionMetadata = {
       ...(body.metadata || {}),
-      ...(receivingAccountSnapshot ? { receivingAccountSnapshot } : {})
+      ...(receivingAccountSnapshot ? { receivingAccountSnapshot } : {}),
+      ...(body.customer ? { customer: body.customer } : {})
     };
 
     if (deviceId && customerId && ctx.deviceRepo) {
@@ -343,6 +372,25 @@ export function registerPaymentRoutes(server, ctx) {
       deviceId,
       metadata: sessionMetadata
     });
+
+    // Cancel previous abandoned active/queued sessions for same customer so new checkout immediately gets active slot
+    if (customerId && ctx.sessionRepo) {
+      try {
+        const prevList = ctx.sessionRepo.findAllActiveOrPendingForCustomer
+          ? ctx.sessionRepo.findAllActiveOrPendingForCustomer(customerId)
+          : (ctx.sessionRepo.findActiveForCustomer ? [ctx.sessionRepo.findActiveForCustomer(customerId, session.id)].filter(Boolean) : []);
+        for (const p of prevList) {
+          if (p && p.id !== session.id) {
+            ctx.sessionRepo.transitionToTerminal(p.id, PaymentStatus.CANCELLED);
+            if (p.receivingAccountId) {
+              ctx.accountRepo?.updateSlotStatus?.(p.receivingAccountId, false, null);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[PaymentsRoute] Auto-cancelled previous customer sessions:', e.message);
+      }
+    }
 
     // Enqueue or Activate slot via QueueEngine ONLY when counter payment or explicitly requested by automated test runner
     let queueResult = { status: initialStatus, queuePosition: 0, expiresAt: null };

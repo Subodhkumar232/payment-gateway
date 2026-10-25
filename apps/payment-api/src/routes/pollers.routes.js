@@ -1,3 +1,4 @@
+import os from 'node:os';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,6 +27,20 @@ const MAX_OBSERVATION_TEXT_CHARS = 64 * 1024;
  *   merchantRepo?: import('@youpi/db').MerchantRepository
  * }} ctx
  */
+
+function getLocalLanIp() {
+  try {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.family === 'IPv4' && !iface.internal && !iface.address.startsWith('169.254.')) {
+          return iface.address;
+        }
+      }
+    }
+  } catch {}
+  return '127.0.0.1';
+}
 export function registerPollerRoutes(server, ctx) {
   // No public fallback: env value, else a random secret persisted in data/.secrets/.
   const enrollmentSecret = resolveSecret('android_enrollment_secret', 'ANDROID_ENROLLMENT_SECRET');
@@ -503,7 +518,13 @@ export function registerPollerRoutes(server, ctx) {
 
     // Canonical runtime URL derivation (Part C2)
     const runtime = resolveRuntimeUrls(merchant?.branding || {});
-    const baseUrl = runtime.apiUrl;
+    let baseUrl = runtime.apiUrl;
+    const reqHost = req.headers['host'] ? req.headers['host'].split(':')[0] : null;
+    if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
+      const lanIp = getLocalLanIp();
+      const targetHost = (reqHost && reqHost !== 'localhost' && reqHost !== '127.0.0.1') ? reqHost : (lanIp !== '127.0.0.1' ? lanIp : 'localhost');
+      baseUrl = `http://${targetHost}:6100`;
+    }
     const token = enrollmentSecret;
     const sessionId = crypto.randomUUID();
     const expiresAt = Date.now() + (10 * 60 * 1000); // 10 minutes

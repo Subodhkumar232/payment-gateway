@@ -58,7 +58,7 @@ export function isProductionLike(env = process.env) {
  * effect because it cannot express a list and would block the allowlisted storefronts.
  */
 export function checkoutFrameHeaders(env = process.env) {
-  const configured = frameAncestorOrigins(env.CHECKOUT_FRAME_ANCESTORS);
+  const configured = (env && env.CHECKOUT_FRAME_ANCESTORS !== undefined) ? frameAncestorOrigins(env.CHECKOUT_FRAME_ANCESTORS || '') : (env === process.env ? frameAncestorOrigins(process.env.CHECKOUT_FRAME_ANCESTORS) : []);
   const frameAncestors = configured.length
     ? `'self' ${configured.join(' ')}`
     : (isProductionLike(env) ? "'self'" : '*');
@@ -127,6 +127,8 @@ export function renderTemplate(template, values) {
   return template.replace(/\{\{([A-Z0-9_]+)\}\}/g, (match, key) => {
     if (!Object.prototype.hasOwnProperty.call(values, key)) return match;
     const value = values[key];
+    if (key === 'INITIAL_STATE_JSON') return String(value === undefined ? '{}' : value);
+    if (key === 'INITIAL_QR_SVG') return String(value === undefined ? '' : value);
     return SCRIPT_PLACEHOLDERS.has(key) ? escapeJsString(value) : escapeHtml(value);
   });
 }
@@ -257,6 +259,12 @@ export class CheckoutServer {
     const downtimeAltBtnDisplay = ((sellingMode === 'ONLINE' && enabledMethods.includes('COD')) || (sellingMode === 'OFFLINE' && enabledMethods.includes('CASH_COUNTER'))) ? 'inline-block' : 'none';
     const downtimeAltBtnLabel = (sellingMode === 'ONLINE') ? 'Pay via Cash on Delivery Instead' : 'Pay by Cash at Till Instead';
 
+    const upiUri = state?.upiUri || ('upi://pay?pa=' + encodeURIComponent(vpa) + '&pn=' + encodeURIComponent(merchantName) + '&am=' + encodeURIComponent(state?.amount || '0.00') + '&tn=' + encodeURIComponent(paymentId));
+    let initialQrSvg = '';
+    try {
+      initialQrSvg = generateQrSvg(upiUri, 220);
+    } catch {}
+
     return renderTemplate(html, {
       PAYMENT_ID: paymentId,
       API_BASE_URL: clientApiBase,
@@ -284,6 +292,7 @@ export class CheckoutServer {
       PC_CARD_STYLE: pcCardStyle,
       DOWNTIME_ALT_BTN_DISPLAY: downtimeAltBtnDisplay,
       DOWNTIME_ALT_BTN_LABEL: downtimeAltBtnLabel,
+      INITIAL_QR_SVG: initialQrSvg,
       INITIAL_STATE_JSON: serializeForScript(state || {})
     });
   }

@@ -87,6 +87,8 @@ describe('Checkout Portal Integration Tests', () => {
     });
 
     test('GET /checkout/:id framing is controlled by CHECKOUT_FRAME_ANCESTORS', async () => {
+      const savedAncestors = process.env.CHECKOUT_FRAME_ANCESTORS;
+      delete process.env.CHECKOUT_FRAME_ANCESTORS;
       // No allowlist configured: the checkout page stays framable by any origin, because
       // merchant storefronts embed it cross-origin. Deployments can pin the allowlist.
       const before = await get('/checkout/pay_test_uuid_12345');

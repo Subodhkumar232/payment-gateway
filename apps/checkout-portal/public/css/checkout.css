@@ -2253,7 +2253,8 @@
         display: none !important;
       }
 
-      .ypg-footer {
+      .ypg-footer,
+      .ypg-sticky-footer {
         display: none !important;
       }
 
@@ -2654,6 +2655,13 @@
       .ypg-pc-active-view::-webkit-scrollbar-thumb {
         background: #cbd5e1;
         border-radius: 4px;
+      }
+
+      #viewUpiContent:not([hidden]) {
+        display: flex !important;
+        flex-direction: column !important;
+        width: 100% !important;
+        min-width: 0 !important;
       }
 
       .ypg-pc-active-view::-webkit-scrollbar-thumb:hover {

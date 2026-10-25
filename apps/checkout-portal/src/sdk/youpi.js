@@ -265,7 +265,8 @@
 
       // Add embedded flag and custom params
       const sep = targetUrl.includes('?') ? '&' : '?';
-      targetUrl = `${targetUrl}${sep}embedded=1`;
+      const parentOrigin = typeof window !== 'undefined' && window.location ? encodeURIComponent(window.location.origin) : '';
+      targetUrl = `${targetUrl}${sep}embedded=1&youpiParentOrigin=${parentOrigin}`;
 
       if (this.options.amount) {
         targetUrl += `&customAmount=${encodeURIComponent(this.options.amount)}`;
@@ -513,7 +514,7 @@
           if (this.options.cancelledUrl) {
             const delim = this.options.cancelledUrl.includes('?') ? '&' : '?';
             window.location.href = `${this.options.cancelledUrl}${delim}order_id=${encodeURIComponent(this.options.orderId || '')}`;
-          } else if (redirectUrl && this._isSafeRedirect(redirectUrl) && redirectUrl !== window.location.href && !redirectUrl.includes('/checkout')) {
+          } else if (!this.options.onClose && !this.options.onCancelled && redirectUrl && this._isSafeRedirect(redirectUrl) && redirectUrl !== window.location.href && !redirectUrl.includes('/checkout')) {
             window.location.href = redirectUrl;
           }
         });

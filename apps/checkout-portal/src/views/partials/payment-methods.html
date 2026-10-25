@@ -140,7 +140,7 @@
                 <div class="ypg-qr-card-container">
                   <!-- Left: QR Box -->
                   <div class="ypg-qr-image-box" id="qrImageContainer">
-                    <div style="font-size:11px; color:#94a3b8; text-align:center;">Loading QR...</div>
+                    {{INITIAL_QR_SVG}}
                   </div>
 
                   <!-- Right: Prompt, UPI App Logos -->
@@ -184,8 +184,25 @@
                   </div>
                   <div class="ypg-instruction-step">
                     <div class="ypg-step-num">3</div>
-                    <div>Payment is detected automatically, or tap <strong>Continue</strong> below after paying.</div>
+                    <div>Payment is detected automatically, or tap <strong>I Have Paid</strong> below after paying.</div>
                   </div>
+                </div>
+
+                <!-- Status & One-Tap Confirmation (Zero Writing) -->
+                <div class="ypg-auto-detection-card" style="margin-top:16px; padding:16px; background:#f8fafc; border:1.5px solid #e2e8f0; border-radius:12px; text-align:center;">
+                  <div style="display:flex; align-items:center; justify-content:center; gap:8px; font-weight:700; color:#1e293b; font-size:14px; margin-bottom:6px;">
+                    <span style="display:inline-block; width:9px; height:9px; background:#16a34a; border-radius:50%; box-shadow:0 0 0 3px rgba(22,163,74,0.25); animation:pulse 1.5s infinite;"></span>
+                    <span>Waiting for your payment...</span>
+                  </div>
+                  <p style="font-size:12.5px; color:#64748b; margin:0 0 12px 0;">
+                    Scan the QR code and approve on PhonePe, GPay, or Paytm.<br/>
+                    Tap below as soon as you have approved the payment:
+                  </p>
+                  <button type="button" id="btnQuickConfirmPayment" onclick="submitPaymentDoneWithUtr()"
+                    style="padding:10px 24px; background:#16a34a; color:#ffffff; font-weight:700; font-size:14px; border:none; border-radius:8px; cursor:pointer; display:inline-flex; align-items:center; gap:8px; box-shadow:0 2px 6px rgba(22,163,74,0.35); transition:transform 0.1s;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span>I Have Paid — Check Payment</span>
+                  </button>
                 </div>
               </div>
 
@@ -523,4 +540,4 @@
             </div>
 
           </div>
-      </main>
+      </div>

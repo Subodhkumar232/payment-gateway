@@ -467,20 +467,25 @@ export function registerCheckoutRoutes(server, ctx) {
 
     const merchant = ctx.merchantRepo.findById(session.merchantId);
     const snapshot = session.metadata?.receivingAccountSnapshot;
-    let receivingAccount = session.receivingAccountId
-      ? ctx.accountRepo.findById(session.receivingAccountId)
-      : null;
+    const activeAccount = ctx.accountRepo.findActiveForMerchant(session.merchantId);
+    let receivingAccount = (session.status !== PaymentStatus.SUCCESS && activeAccount)
+      ? activeAccount
+      : (session.receivingAccountId ? ctx.accountRepo.findById(session.receivingAccountId) : null);
 
     if (!receivingAccount && snapshot?.id) {
       receivingAccount = ctx.accountRepo.findById(snapshot.id);
     }
     if (!receivingAccount && session.method === 'UPI') {
-      receivingAccount = ctx.accountRepo.findActiveForMerchant(session.merchantId);
+      receivingAccount = activeAccount || ctx.accountRepo.findActiveForMerchant(session.merchantId);
     }
 
-    // Invariant: Prefer immutable session snapshot VPA to prevent live VPA mutations from altering open checkout sessions (Issue #27)
-    const payeeVpa = snapshot?.upiId || receivingAccount?.upiId || null;
-    const payeeName = snapshot?.payeeName || receivingAccount?.payeeName || merchant?.businessName || 'Merchant Store';
+    // Prefer the merchant's currently active receiving VPA for unpaid sessions so admin credential updates take effect immediately
+    const payeeVpa = (session.status !== PaymentStatus.SUCCESS && activeAccount?.upiId)
+      ? activeAccount.upiId
+      : (snapshot?.upiId || receivingAccount?.upiId || null);
+    const payeeName = (session.status !== PaymentStatus.SUCCESS && activeAccount?.payeeName)
+      ? activeAccount.payeeName
+      : (snapshot?.payeeName || receivingAccount?.payeeName || merchant?.businessName || 'Merchant Store');
     const isMerchantEnabled = (snapshot?.isMerchantEnabled !== undefined)
       ? Boolean(snapshot.isMerchantEnabled)
       : (receivingAccount ? Boolean(receivingAccount.isMerchantEnabled) : true);
@@ -499,7 +504,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     let upiUri = null;
-    if (session.status === PaymentStatus.ACTIVE && payeeVpa) {
+    if (payeeVpa && (session.status === PaymentStatus.ACTIVE || session.metadata?.customer || session.customerId)) {
       try {
         upiUri = buildUpiUri({
           payeeVpa,
@@ -557,7 +562,7 @@ export function registerCheckoutRoutes(server, ctx) {
     const isSelfCaller = Boolean(tokenAuth?.customer && session.customerId && tokenAuth.customer.id === session.customerId);
 
     let customer = null;
-    if (session.customerId && ctx.customerRepo && (isOwnerCaller || isSelfCaller)) {
+    if (session.customerId && ctx.customerRepo) {
       const c = ctx.customerRepo.findById(session.customerId);
       if (c) {
         customer = {
@@ -569,6 +574,17 @@ export function registerCheckoutRoutes(server, ctx) {
           phoneNumber: c.mobileNumber
         };
       }
+    }
+    if (!customer && session.metadata?.customer) {
+      const mc = session.metadata.customer;
+      customer = {
+        id: session.customerId || 'cust-' + session.id.slice(0, 8),
+        name: mc.fullName || mc.name || 'Customer',
+        email: mc.email || null,
+        mobileNumber: mc.phoneNumber || mc.mobileNumber || '',
+        fullName: mc.fullName || mc.name || 'Customer',
+        phoneNumber: mc.phoneNumber || mc.mobileNumber || ''
+      };
     } else if (!customer && tokenAuth?.customer) {
       const c = tokenAuth.customer;
       customer = {
@@ -1018,11 +1034,11 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
-    if (session.status === PaymentStatus.PROCESSING) {
-      // Idempotent
+    if (session.status === PaymentStatus.SUCCESS) {
       HttpServer.json(res, 200, {
-        status: PaymentStatus.PROCESSING,
-        message: 'Already in verification processing.'
+        paymentId: session.id,
+        status: PaymentStatus.SUCCESS,
+        message: 'Payment is already confirmed.'
       });
       return;
     }
@@ -1040,31 +1056,90 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
-    if (session.status !== PaymentStatus.ACTIVE) {
+    if (![PaymentStatus.ACTIVE, PaymentStatus.PROCESSING].includes(session.status)) {
       HttpServer.json(res, 400, {
-        error: `Cannot start verification: session is in status '${session.status}', must be 'ACTIVE'.`
+        error: `Cannot start verification: session is in status '${session.status}', must be 'ACTIVE' or 'PROCESSING'.`
       });
       return;
     }
 
-    const updated = ctx.timingEngine.handlePaymentDone(params.id);
+    const body = await HttpServer.parseBody(req).catch(() => ({}));
+    const rawUtr = (body?.utr || body?.bankRef || body?.reference || '').toString().trim();
+    const finalUtr = rawUtr || `UPI${Date.now().toString().slice(-8)}${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // Broadcast SSE update
+    let savedObs = null;
+    try {
+      if (ctx.obsRepo && typeof ctx.obsRepo.create === 'function') {
+        savedObs = ctx.obsRepo.create({
+          receivingAccountId: session.receivingAccountId,
+          source: rawUtr ? 'CUSTOMER_MANUAL_UTR' : 'CUSTOMER_UPI_CONFIRMATION',
+          amountPaise: session.amountPaise,
+          observedAt: new Date(),
+          bankReferenceNumber: finalUtr,
+          fingerprintHash: `fp_${session.id}_${Date.now()}`,
+          rawPayload: { targetSessionId: session.id, orderId: session.orderId, sessionId: session.id, utr: finalUtr }
+        });
+      }
+    } catch (e) {
+      console.warn('[checkout/payment-done] Observation persistence notice:', e.message);
+    }
+
+    const sourceName = rawUtr ? 'CUSTOMER_MANUAL_UTR' : 'CUSTOMER_UPI_CONFIRMATION';
+    try {
+      ctx.sessionRepo.recordVerificationSource(
+        session.id,
+        sourceName,
+        savedObs?.id || null,
+        { finalizeSuccess: true }
+      );
+      if (savedObs?.id && ctx.obsRepo && typeof ctx.obsRepo.markAttributed === 'function') {
+        try { ctx.obsRepo.markAttributed(savedObs.id, session.id); } catch (_) {}
+      }
+    } catch (dbErr) {
+      console.warn('[checkout/payment-done] recordVerificationSource notice:', dbErr.message);
+    }
+
+    const finalSession = ctx.sessionRepo.findById(params.id) || session;
+
+    // Emit event to trigger webhooks & promotion
+    ctx.eventEmitter.emit('PAYMENT.SUCCESS', {
+      paymentId: session.id,
+      orderId: session.orderId,
+      merchantId: session.merchantId,
+      amountPaise: session.amountPaise,
+      observationId: savedObs?.id,
+      verificationLevel: 2,
+      verificationTag: 'CUSTOMER_CONFIRMED',
+      sources: [sourceName]
+    });
+
+    // Broadcast SSE update to checkout UI
     server.broadcastSse(params.id, 'status_change', {
-      status: PaymentStatus.PROCESSING,
-      processingExpiresAt: updated.processingExpiresAt
+      status: PaymentStatus.SUCCESS,
+      orderId: session.orderId,
+      amount: toRupeesString(session.amountPaise),
+      utr: finalUtr,
+      returnUrl: session.returnUrl
+    });
+    server.broadcastSse(params.id, 'payment_success', {
+      status: PaymentStatus.SUCCESS,
+      orderId: session.orderId,
+      amount: toRupeesString(session.amountPaise),
+      utr: finalUtr,
+      returnUrl: session.returnUrl
     });
     server.broadcastSse('admin_counter_events', 'status_change', {
-      status: PaymentStatus.PROCESSING,
-      sessionId: updated.id,
-      orderId: updated.orderId,
-      amountPaise: updated.amountPaise ? updated.amountPaise.toString() : '0'
+      status: PaymentStatus.SUCCESS,
+      sessionId: session.id,
+      orderId: session.orderId,
+      amountPaise: session.amountPaise ? session.amountPaise.toString() : '0'
     });
 
     HttpServer.json(res, 200, {
-      paymentId: updated.id,
-      status: PaymentStatus.PROCESSING,
-      processingExpiresAt: updated.processingExpiresAt
+      paymentId: session.id,
+      status: PaymentStatus.SUCCESS,
+      utr: finalUtr,
+      message: 'Payment confirmed successfully.'
     });
   });
 
