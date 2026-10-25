@@ -391,17 +391,17 @@
             html += `
               <div class="saved-account-row ${isActive ? 'active' : ''}" onclick="handleSelectSavedAccount('${acc.id}', event)">
                 <div style="display:flex; align-items:center; gap:8px;">
-                  <div style="width:28px; height:28px; border-radius:50%; background:#e0f2fe; color:#0369a1; font-weight:800; font-size:12px; display:flex; align-items:center; justify-content:center;">${initial}</div>
+                  <div style="width:28px; height:28px; border-radius:50%; background:#e0f2fe; color:var(--ypg-hc-info, #0369a1); font-weight:800; font-size:12px; display:flex; align-items:center; justify-content:center;">${initial}</div>
                   <div>
                     <div style="font-size:13px; font-weight:700;">${escapeHtml(acc.name)}</div>
-                    <div style="font-size:11px; color:#64748b;">${escapeHtml(acc.email || '')} ${acc.mobileNumber ? '&bull; ' + escapeHtml(acc.mobileNumber) : ''}</div>
+                    <div style="font-size:11px; color:var(--ypg-text-muted);">${escapeHtml(acc.email || '')} ${acc.mobileNumber ? '&bull; ' + escapeHtml(acc.mobileNumber) : ''}</div>
                   </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:6px;">
                   <button type="button" class="ypg-btn-select-account" style="background:#eff6ff; border:1px solid #bfdbfe; color:var(--ypg-blue); font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:2px; transition:all 0.15s;" onclick="handleSelectSavedAccount('${acc.id}', event)">
                     <span>Select</span> &rsaquo;
                   </button>
-                  <button type="button" style="background:none; border:none; color:#94a3b8; font-size:14px; cursor:pointer; padding:2px 6px;" onclick="removeRememberedAccount('${acc.id}', event)" title="Remove Account">✕</button>
+                  <button type="button" style="background:none; border:none; color:var(--ypg-hc-text-faint, #94a3b8); font-size:14px; cursor:pointer; padding:2px 6px;" onclick="removeRememberedAccount('${acc.id}', event)" title="Remove Account">✕</button>
                 </div>
               </div>
             `;
@@ -1500,9 +1500,55 @@
       }
     }
 
+    // High contrast follows the device's "increase contrast" setting. The
+    // checkout-hc theme in checkout.css carries the colours; the merchant colour
+    // is set inline, so it is darkened here until white text on it reaches 7:1.
+    const contrastQuery = window.matchMedia ? window.matchMedia('(prefers-contrast: more)') : null;
+    let lastBranding = null;
+
+    function isHighContrast() {
+      return !!(contrastQuery && contrastQuery.matches);
+    }
+
+    function applyContrastPreference() {
+      if (isHighContrast()) document.documentElement.setAttribute('data-theme', 'checkout-hc');
+      else document.documentElement.removeAttribute('data-theme');
+    }
+
+    function contrastWithWhite(col) {
+      let hex = String(col).replace('#', '');
+      if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+      if (!/^[0-9a-f]{6}$/i.test(hex)) return null;
+      const lin = (v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+      const [r, g, b] = [0, 2, 4].map((i) => lin(parseInt(hex.slice(i, i + 2), 16) / 255));
+      return 1.05 / (0.2126 * r + 0.7152 * g + 0.0722 * b + 0.05);
+    }
+
+    function darkenToContrast(col, ratio) {
+      let out = col;
+      for (let i = 0; i < 40; i++) {
+        const c = contrastWithWhite(out);
+        if (c === null || c >= ratio) return out;
+        out = adjustHexColor(out, -8);
+      }
+      return out;
+    }
+
+    applyContrastPreference();
+    if (contrastQuery) {
+      const onContrastChange = () => {
+        applyContrastPreference();
+        if (lastBranding) applyDynamicTheme(lastBranding);
+      };
+      if (contrastQuery.addEventListener) contrastQuery.addEventListener('change', onContrastChange);
+      else if (contrastQuery.addListener) contrastQuery.addListener(onContrastChange);
+    }
+
     function applyDynamicTheme(branding) {
       if (!branding) return;
-      const primary = branding.primaryColor || '#0b63e5';
+      lastBranding = branding;
+      let primary = branding.primaryColor || '#0b63e5';
+      if (isHighContrast()) primary = darkenToContrast(primary, 7);
       const darkPrimary = adjustHexColor(primary, -25);
       const root = document.documentElement;
 

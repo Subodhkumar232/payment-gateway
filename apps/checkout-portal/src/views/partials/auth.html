@@ -71,7 +71,7 @@
 
             <!-- STEP 3: OTP VERIFICATION (Shown for existing user login OR after signup) -->
             <div id="authStepOtp" hidden>
-              <div class="ypg-auth-badge-banner" style="background:#eff6ff; border-color:#bfdbfe; color:#1e40af;">
+              <div class="ypg-auth-badge-banner" style="background:#eff6ff; border-color:#bfdbfe; color:var(--ypg-hc-info, #1e40af);">
                 <div>
                   <span>Code sent to WhatsApp / SMS: </span>
                   <strong id="authOtpPhoneBadge">+91 </strong>
@@ -102,7 +102,7 @@
                   <button type="button" class="ypg-btn-link" id="btnResendOtp" onclick="handleResendOtp()"
                     style="margin-left:4px;">Resend OTP</button>
                 </div>
-                <span id="otpCountdownTimer" style="font-weight:600; color:#64748b;"></span>
+                <span id="otpCountdownTimer" style="font-weight:600; color:var(--ypg-text-muted);"></span>
               </div>
             </div>
 
