@@ -1,0 +1,5 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": { "buildCommand": "npm ci --omit=dev" },
+  "deploy": { "startCommand": "node apps/payment-api/src/index.js", "restartPolicyType": "ON_FAILURE" }
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm ci --omit=dev --workspace=apps/checkout-portal --include-workspace-root",
+  "buildCommand": "",
+  "outputDirectory": "public",
+  "functions": {
+    "api/checkout.js": {
+      "includeFiles": "apps/checkout-portal/{src,public}/**",
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/checkout" }]
+}

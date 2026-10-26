@@ -1,0 +1,5 @@
+apps/android-observer-app
+apps/*/public/*.apk
+assets
+docs
+data
