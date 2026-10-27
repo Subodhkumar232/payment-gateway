@@ -262,15 +262,17 @@ describe('Checkout Portal XSS / Redirect Hardening', () => {
   });
 
   describe('merchant-sdk message listener origin checks', () => {
-    for (const file of ['youpi.js', 'youpi-checkout.js']) {
-      test(`${file} ignores messages from an unexpected origin`, () => {
-        const src = fs.readFileSync(
-          path.join(__dirname, '../../../../packages/merchant-sdk/src', file),
-          'utf8'
-        );
-        assert.ok(src.includes('_checkoutOrigin()'));
-        assert.ok(src.includes('if (expectedOrigin && e.origin !== expectedOrigin) return;'));
-      });
+    for (const dir of [
+      path.join(__dirname, '../../../../packages/merchant-sdk/src'),
+      path.join(__dirname, '../sdk')
+    ]) {
+      for (const file of ['youpi.js', 'youpi-checkout.js']) {
+        test(`${path.basename(dir)}/${file} ignores messages from an unexpected origin`, () => {
+          const src = fs.readFileSync(path.join(dir, file), 'utf8');
+          assert.ok(src.includes('_checkoutOrigin()'));
+          assert.ok(src.includes('if (expectedOrigin && e.origin !== expectedOrigin) return;'));
+        });
+      }
     }
   });
 

@@ -140,12 +140,18 @@ describe('Checkout Portal Integration Tests', () => {
       assert.ok(resYoupi.text.includes('YoupiCheckout'));
       assert.ok(resYoupi.text.includes('data-youpi-pay'));
       assert.ok(resYoupi.text.includes('youpi:payment:success'));
+      assert.ok(resYoupi.text.includes('youpiParentOrigin='));
+      assert.ok(resYoupi.text.includes('resolveReturnUrl'));
+      assert.ok(resYoupi.text.includes('_checkoutOrigin()'));
 
       const resLegacy = await get('/sdk/youpi-checkout.js');
       assert.equal(resLegacy.status, 200);
       assert.ok(resLegacy.headers['content-type'].includes('application/javascript'));
       assert.equal(resLegacy.headers['access-control-allow-origin'], '*');
       assert.ok(resLegacy.text.includes('YoupiCheckout'));
+      assert.ok(resLegacy.text.includes('youpiParentOrigin='));
+      assert.ok(resLegacy.text.includes('resolveReturnUrl'));
+      assert.ok(resLegacy.text.includes('_checkoutOrigin()'));
     });
 
     test('GET /checkout/:id includes PC 2-column sidebar, UPI Server indicator, and NO visual UPI ID in summary', async () => {
