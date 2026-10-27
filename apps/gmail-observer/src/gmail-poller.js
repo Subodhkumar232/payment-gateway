@@ -11,33 +11,42 @@ const rootDir = path.resolve(__dirname, '../../..');
 
 function extractBodyFromGmailPayload(payload) {
   if (!payload) return '';
-  if (payload.body?.data) {
-    try {
-      return Buffer.from(payload.body.data, 'base64url').toString('utf8');
-    } catch {}
+  const directParts = Array.isArray(payload.parts) ? payload.parts : [];
+  const bodyParts = [payload, ...directParts];
+  const isAttachment = part => Boolean(part.filename) || (Array.isArray(part.headers) &&
+    part.headers.some(header => header.name.toLowerCase() === 'content-disposition' &&
+      /^\s*attachment(?:\s*;|\s*$)/i.test(header.value)));
+
+  function collectNestedParts(container) {
+    // Follow MIME body containers, not attached messages or named attachments.
+    if (!container.mimeType?.startsWith('multipart/') || isAttachment(container)) return;
+    for (const child of Array.isArray(container.parts) ? container.parts : []) {
+      if (isAttachment(child)) continue;
+      bodyParts.push(child);
+      collectNestedParts(child);
+    }
   }
-  if (Array.isArray(payload.parts)) {
-    for (const part of payload.parts) {
-      if (part.mimeType === 'text/plain' && part.body?.data) {
+  for (const part of directParts) collectNestedParts(part);
+
+  // Search the whole body tree for plain text before accepting any HTML branch.
+  for (const mimeType of ['text/plain', 'text/html']) {
+    for (const part of bodyParts) {
+      if (part.mimeType === mimeType && part.body?.data) {
         try {
-          return Buffer.from(part.body.data, 'base64url').toString('utf8');
+          const text = Buffer.from(part.body.data, 'base64url').toString('utf8');
+          return mimeType === 'text/html' ? text.replace(/<[^>]+>/g, ' ') : text;
         } catch {}
       }
     }
-    for (const part of payload.parts) {
-      if (part.mimeType === 'text/html' && part.body?.data) {
-        try {
-          const html = Buffer.from(part.body.data, 'base64url').toString('utf8');
-          return html.replace(/<[^>]+>/g, ' ');
-        } catch {}
-      }
-    }
-    for (const part of payload.parts) {
-      if (part.body?.data) {
-        try {
-          return Buffer.from(part.body.data, 'base64url').toString('utf8');
-        } catch {}
-      }
+  }
+
+  // Preserve the legacy fallback for untyped top-level/direct parts without
+  // broadening it to binary attachments found inside nested MIME containers.
+  for (const part of [payload, ...directParts]) {
+    if (part.body?.data) {
+      try {
+        return Buffer.from(part.body.data, 'base64url').toString('utf8');
+      } catch {}
     }
   }
   return '';
