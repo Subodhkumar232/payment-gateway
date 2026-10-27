@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 
 const testFiles = [
   'packages/common/src/__tests__/common.test.js',
+  'packages/common/src/__tests__/gmail-redirect-port.test.js',
   'packages/db/src/__tests__/customer-reset.test.js',
   'packages/db/src/__tests__/auth-matrix.test.js',
   'packages/db/src/__tests__/db.test.js',

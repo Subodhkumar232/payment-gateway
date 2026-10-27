@@ -239,7 +239,11 @@ export function resolvePairingUrl(options = {}) {
 export function resolveGmailRedirectUri(branding = {}) {
   if (process.env.GMAIL_REDIRECT_URI) return process.env.GMAIL_REDIRECT_URI;
   try {
-    return `${resolveRuntimeUrls(branding || {}).gmailUrl}/oauth/callback`;
+    const urls = resolveRuntimeUrls(branding || {});
+    const gmailUrl = urls.isProduction
+      ? urls.gmailUrl
+      : `http://localhost:${process.env.GMAIL_OBSERVER_PORT || 6003}`;
+    return `${gmailUrl}/oauth/callback`;
   } catch {
     return `http://localhost:${process.env.GMAIL_OBSERVER_PORT || 6003}/oauth/callback`;
   }
