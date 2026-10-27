@@ -161,14 +161,16 @@ export class Database {
   transaction(callback, options = {}) {
     const mode = options.mode || 'IMMEDIATE';
     const isNested = (this._transactionDepth || 0) > 0;
-    this._transactionDepth = (this._transactionDepth || 0) + 1;
-    const savepointName = `sp_${this._transactionDepth}`;
+    const nextDepth = (this._transactionDepth || 0) + 1;
+    const savepointName = `sp_${nextDepth}`;
 
     if (isNested) {
       this.db.exec(`SAVEPOINT ${savepointName};`);
     } else {
       this.db.exec(`BEGIN ${mode} TRANSACTION;`);
     }
+    // A rejected BEGIN or SAVEPOINT must not leave a phantom nested transaction.
+    this._transactionDepth = nextDepth;
 
     try {
       const result = callback();

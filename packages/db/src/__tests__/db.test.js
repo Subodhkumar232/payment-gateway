@@ -1,5 +1,8 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   Database,
   runMigrations,
@@ -306,5 +309,78 @@ describe('@youpi/db Unit & Integration Tests', () => {
 
       legacyDb.close();
     });
+  });
+});
+
+describe('Database transaction recovery after writer contention', () => {
+  let directory;
+  let writer;
+  let other;
+
+  beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), 'youpi-transaction-recovery-'));
+    const dbPath = join(directory, 'test.sqlite');
+    writer = new Database({ dbPath, autoMigrate: false });
+    other = new Database({ dbPath, autoMigrate: false });
+    writer.exec('PRAGMA busy_timeout = 0; CREATE TABLE entries (value TEXT);');
+    other.exec('PRAGMA busy_timeout = 0;');
+  });
+
+  afterEach(() => {
+    writer?.close();
+    other?.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  test('a rejected BEGIN does not weaken the next IMMEDIATE transaction', () => {
+    other.exec('BEGIN IMMEDIATE;');
+    let callbackCalled = false;
+    assert.throws(() => writer.transaction(() => {
+      callbackCalled = true;
+    }), /database is locked/);
+    assert.equal(callbackCalled, false);
+    other.exec('ROLLBACK;');
+
+    writer.transaction(() => {
+      // The writer lock must be held before the callback, even before its first write.
+      assert.throws(() => other.exec('BEGIN IMMEDIATE;'), /database is locked/);
+      writer.execute('INSERT INTO entries VALUES (?)', ['committed']);
+    });
+    assert.equal(other.queryOne('SELECT COUNT(*) AS count FROM entries').count, 1);
+  });
+
+  test('successful writes after exhausted retries remain committed across connections and close', () => {
+    other.exec('BEGIN IMMEDIATE;');
+    assert.throws(() => writer.withRetry(() => writer.transaction(() => {
+      writer.execute('INSERT INTO entries VALUES (?)', ['blocked']);
+    }), 1, 0), { name: 'DatabaseBusyError' });
+    other.exec('ROLLBACK;');
+
+    writer.transaction(() => writer.execute('INSERT INTO entries VALUES (?)', ['committed']));
+    assert.equal(writer.queryOne('SELECT COUNT(*) AS count FROM entries').count, 1);
+    const visibleBeforeClose = other.queryOne('SELECT COUNT(*) AS count FROM entries').count;
+    writer.close();
+    writer = null;
+    const persistedAfterClose = other.queryOne('SELECT COUNT(*) AS count FROM entries').count;
+    assert.deepEqual([visibleBeforeClose, persistedAfterClose], [1, 1]);
+  });
+
+  test('nested rollback preserves outer writes and later top-level rollback remains atomic', () => {
+    writer.transaction(() => {
+      writer.execute('INSERT INTO entries VALUES (?)', ['outer']);
+      assert.throws(() => writer.transaction(() => {
+        writer.execute('INSERT INTO entries VALUES (?)', ['rolled-back-inner']);
+        throw new Error('inner failure');
+      }), /inner failure/);
+      writer.transaction(() => writer.execute('INSERT INTO entries VALUES (?)', ['nested']));
+    });
+    assert.deepEqual(other.query('SELECT value FROM entries ORDER BY rowid').map(row => row.value), ['outer', 'nested']);
+
+    assert.throws(() => writer.transaction(() => {
+      writer.execute('INSERT INTO entries VALUES (?)', ['rolled-back-outer']);
+      writer.transaction(() => writer.execute('INSERT INTO entries VALUES (?)', ['rolled-back-nested']));
+      throw new Error('outer failure');
+    }), /outer failure/);
+    assert.deepEqual(other.query('SELECT value FROM entries ORDER BY rowid').map(row => row.value), ['outer', 'nested']);
   });
 });
