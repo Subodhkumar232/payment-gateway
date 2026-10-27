@@ -860,13 +860,19 @@ describe('Payment API End-to-End HTTP Integration Tests', () => {
         'the stored payload is re-signed, not re-built'
       );
 
-      const settledRow = retryDb.queryOne(
-        'SELECT attempt_count, is_successful, response_status FROM webhook_deliveries WHERE id = ?',
-        [failedRow.id]
-      );
-      assert.equal(settledRow.attempt_count, 2);
-      assert.equal(settledRow.is_successful, 1);
-      assert.equal(settledRow.response_status, 200);
+      let settledRow = null;
+      const settleDeadline = Date.now() + 3000;
+      while (Date.now() < settleDeadline) {
+        settledRow = retryDb.queryOne(
+          'SELECT attempt_count, is_successful, response_status FROM webhook_deliveries WHERE id = ?',
+          [failedRow.id]
+        );
+        if (settledRow && settledRow.attempt_count === 2 && settledRow.is_successful === 1) break;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.equal(settledRow?.attempt_count, 2);
+      assert.equal(settledRow?.is_successful, 1);
+      assert.equal(settledRow?.response_status, 200);
     } finally {
       if (retryServer) await retryServer.close();
       retryDb.close();

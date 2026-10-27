@@ -22,6 +22,16 @@
 
   const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
 
+  function sanitizeModalUrl(url) {
+    try {
+      const parsed = new URL(url, window.location.href);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return parsed.href;
+      }
+    } catch {}
+    return 'about:blank';
+  }
+
   /**
    * Helper: extract configuration from the <script> tag loading this file.
    */
@@ -56,6 +66,25 @@
   }
 
   const scriptConfig = getScriptConfig();
+
+  /**
+   * The gateway stores only an absolute http(s) returnUrl, so a relative successUrl is
+   * resolved against this storefront's own origin before it is sent. Without this a
+   * merchant using `data-success-url="/success"` would get a 400 from the API.
+   * @param {string} [raw]
+   * @returns {string|undefined} absolute http(s) URL, or undefined when unusable
+   */
+  function resolveReturnUrl(raw) {
+    if (!raw) return undefined;
+    try {
+      const base = (typeof window !== 'undefined' && window.location) ? window.location.href : undefined;
+      const parsed = new URL(raw, base);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
+      return parsed.href;
+    } catch (e) {
+      return undefined;
+    }
+  }
 
   /**
    * YoupiCheckout class
@@ -192,7 +221,7 @@
             customer: (custPayload.email || custPayload.phoneNumber || custPayload.fullName) ? custPayload : undefined,
             description: instance.options.description,
             metadata: instance.options.metadata,
-            returnUrl: instance.options.successUrl || undefined
+            returnUrl: resolveReturnUrl(instance.options.successUrl)
           })
         });
 
@@ -267,6 +296,16 @@
       const sep = targetUrl.includes('?') ? '&' : '?';
       targetUrl = `${targetUrl}${sep}embedded=1`;
 
+      // Declare this page's origin so the checkout can target its postMessages
+      // even when the browser strips the referrer. Opaque origins (file:) and
+      // non-http(s) schemes must not be announced.
+      try {
+        const parsed = new URL(window.location.href);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          targetUrl += `&youpiParentOrigin=${encodeURIComponent(parsed.origin)}`;
+        }
+      } catch {}
+
       if (this.options.amount) {
         targetUrl += `&customAmount=${encodeURIComponent(this.options.amount)}`;
       }
@@ -321,7 +360,7 @@
 
       const closeBtn = document.createElement('button');
       closeBtn.className = 'youpi-checkout-close-btn';
-      closeBtn.innerHTML = '✕';
+      closeBtn.textContent = '✕';
       closeBtn.title = 'Close Checkout';
       closeBtn.type = 'button';
       closeBtn.onclick = () => {
@@ -339,7 +378,7 @@
 
       const iframe = document.createElement('iframe');
       iframe.className = 'youpi-checkout-iframe';
-      iframe.src = targetUrl;
+      iframe.src = sanitizeModalUrl(targetUrl);
       // Only messages from this exact iframe/origin are trusted (see _handleMessage).
       this._iframe = iframe;
       try { this._iframeOrigin = new URL(targetUrl, window.location.href).origin; } catch { this._iframeOrigin = null; }
@@ -388,11 +427,28 @@
       }
     }
 
+    /**
+     * Origin of the checkout iframe this instance embeds. Messages from any
+     * other origin are ignored so a third party cannot forge payment events.
+     */
+    _checkoutOrigin() {
+      try {
+        // Only an explicitly configured checkout URL is authoritative. `portalUrl` defaults
+        // to localhost, so including it would make this check reject legitimate messages.
+        const url = this.options.checkoutUrl;
+        if (url) return new URL(url, window.location.href).origin;
+      } catch (e) { }
+      return null;
+    }
+
     _handleMessage(e) {
       // Ignore messages from any window other than our checkout iframe (spoofed success events).
       if (!this._iframe || e.source !== this._iframe.contentWindow) return;
       if (!this._iframeOrigin || e.origin !== this._iframeOrigin) return;
       if (!e.data || typeof e.data !== 'object') return;
+
+      const expectedOrigin = this._checkoutOrigin();
+      if (expectedOrigin && e.origin !== expectedOrigin) return;
 
       const event = e.data.event;
       const rawData = e.data.data || e.data;

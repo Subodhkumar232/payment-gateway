@@ -35,6 +35,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 2
 
       # -------------------------------------------------------------
@@ -45,8 +46,7 @@ jobs:
       - name: Check for Production Container Changes
         id: filter
         run: |
-          # The container assets (Dockerfile, docker-compose.yml) are not part of this
-          # repository yet. Skip the whole build/scan/push pipeline instead of failing.
+          # Verify Dockerfile is present before attempting container build/scan/push.
           if [ ! -f Dockerfile ]; then
             echo "::notice::No Dockerfile found in the repository - skipping container build, scan and push."
             echo "should_build=false" >> "$GITHUB_OUTPUT"

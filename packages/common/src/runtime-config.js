@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 /**
  * Canonical Cloudflare Tunnel and Runtime URL Resolution Engine.
  * Single source of truth for runtime mode, derived hostnames, and service mappings.
@@ -180,8 +182,8 @@ export function resolveRuntimeUrls(options = {}) {
 export function createPairingPayload(options = {}) {
   const {
     serverUrl,
-    sessionId = `pair_sess_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-    token = `tok_${Math.random().toString(36).substring(2, 12)}`,
+    sessionId = `pair_sess_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+    token = `tok_${crypto.randomBytes(8).toString('hex')}`,
     merchantId = '00000000-0000-0000-0000-000000000001',
     ttlMs = 10 * 60 * 1000 // 10 minutes default
   } = options;

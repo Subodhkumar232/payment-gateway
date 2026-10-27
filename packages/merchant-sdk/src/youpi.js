@@ -22,6 +22,16 @@
 
   const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
 
+  function sanitizeModalUrl(url) {
+    try {
+      const parsed = new URL(url, window.location.href);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return parsed.href;
+      }
+    } catch {}
+    return 'about:blank';
+  }
+
   /**
    * Helper: extract configuration from the <script> tag loading this file.
    */
@@ -350,7 +360,7 @@
 
       const closeBtn = document.createElement('button');
       closeBtn.className = 'youpi-checkout-close-btn';
-      closeBtn.innerHTML = '✕';
+      closeBtn.textContent = '✕';
       closeBtn.title = 'Close Checkout';
       closeBtn.type = 'button';
       closeBtn.onclick = () => {
@@ -368,7 +378,7 @@
 
       const iframe = document.createElement('iframe');
       iframe.className = 'youpi-checkout-iframe';
-      iframe.src = targetUrl;
+      iframe.src = sanitizeModalUrl(targetUrl);
       // Only messages from this exact iframe/origin are trusted (see _handleMessage).
       this._iframe = iframe;
       try { this._iframeOrigin = new URL(targetUrl, window.location.href).origin; } catch { this._iframeOrigin = null; }

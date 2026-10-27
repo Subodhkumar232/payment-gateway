@@ -1,9 +1,11 @@
 import crypto from 'node:crypto';
 import { encryptAtRest, decryptAtRest, safeEqual } from '@youpi/common';
 
-/** Computes a deterministic SHA-256 hex digest for storing and verifying merchant API keys. */
+const API_KEY_SALT = 'youpi_merchant_api_key_salt_v1';
+
+/** Computes a deterministic scrypt hex digest for storing and verifying merchant API keys. */
 export function hashApiKey(rawKey) {
-  return crypto.createHash('sha256').update(String(rawKey)).digest('hex');
+  return crypto.scryptSync(String(rawKey), API_KEY_SALT, 32).toString('hex');
 }
 
 /** Gmail OAuth credentials are nested inside `branding.gmailConfig`; encrypt just those. */

@@ -350,7 +350,7 @@ const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const consumedOAuthStates = new Map();
 
 function oauthStateMac(payload) {
-  return crypto.createHmac('sha256', getObserverToken()).update(`oauth-state:${payload}`).digest('hex');
+  return crypto.scryptSync(`oauth-state:${payload}`, getObserverToken(), 32).toString('hex');
 }
 
 /**

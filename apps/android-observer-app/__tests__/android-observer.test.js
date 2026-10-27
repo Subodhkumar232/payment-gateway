@@ -122,6 +122,15 @@ describe('Android Payment Observer Integration Tests', () => {
   });
 
   test('submits observation with clientMessageId and returns it in response', async () => {
+    const session = apiInstance.app.context.sessionRepo.create({
+      merchantId: '00000000-0000-0000-0000-000000000001',
+      receivingAccountId: '00000000-0000-0000-0000-000000000002',
+      orderId: 'ANDR-CLIENT-MSG-1',
+      amountPaise: 15000n
+    });
+    apiInstance.app.context.queueEngine.enqueueOrActivate(session.id, '00000000-0000-0000-0000-000000000002');
+    apiInstance.app.context.timingEngine.handlePaymentDone(session.id);
+
     const clientMsgId = 'msg-uuid-999-client';
     const res = await driver.submitObservation({
       amount: '150.00',
@@ -137,6 +146,15 @@ describe('Android Payment Observer Integration Tests', () => {
   });
 
   test('submits raw bank SMS with clientMessageId and processes through pipeline', async () => {
+    const session = apiInstance.app.context.sessionRepo.create({
+      merchantId: '00000000-0000-0000-0000-000000000001',
+      receivingAccountId: '00000000-0000-0000-0000-000000000002',
+      orderId: 'ANDR-CLIENT-SMS-1',
+      amountPaise: 50000n
+    });
+    apiInstance.app.context.queueEngine.enqueueOrActivate(session.id, '00000000-0000-0000-0000-000000000002');
+    apiInstance.app.context.timingEngine.handlePaymentDone(session.id);
+
     const clientMsgId = 'sms-uuid-777-client';
     const res = await driver.submitSms({
       sender: 'VK-HDFCBK',

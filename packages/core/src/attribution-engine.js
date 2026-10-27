@@ -115,6 +115,10 @@ export class AttributionEngine {
    * }}
    */
   processObservation(normalizedObs) {
+    if (normalizedObs && normalizedObs.amountPaise !== undefined && typeof normalizedObs.amountPaise !== 'bigint') {
+      normalizedObs = { ...normalizedObs, amountPaise: BigInt(normalizedObs.amountPaise) };
+    }
+
     // Tier 1: Check fingerprint for deduplication
     const existing = this.obsRepo.findByFingerprint(normalizedObs.fingerprintHash);
     if (existing) {
@@ -596,8 +600,8 @@ export class AttributionEngine {
           sources: verifyResult.sources
         });
 
-        // If grace period is 0 (e.g. in instant tests), finalize immediately
-        if (this.verificationPolicy === 'SINGLE_CHANNEL_VALIDATED_GMAIL' || this.gracePeriodMs <= 0) {
+        // If grace period is 0 (e.g. in instant tests), finalize immediately unless dual channel is required
+        if (this.verificationPolicy !== 'REQUIRE_DUAL_CHANNEL' && (this.verificationPolicy === 'SINGLE_CHANNEL_VALIDATED_GMAIL' || this.gracePeriodMs <= 0)) {
           const finalResult = this.sessionRepo.recordVerificationSource(
             currentSession.id,
             normalizedObs.source,
@@ -626,6 +630,21 @@ export class AttributionEngine {
             verificationLevel: finalResult.level,
             verificationTag: finalResult.tag,
             verificationSources: finalResult.sources
+          };
+        }
+
+        if (this.verificationPolicy === 'REQUIRE_DUAL_CHANNEL') {
+          return {
+            attributed: true,
+            duplicate: false,
+            lateMatch: false,
+            wasActive,
+            paymentSessionId: currentSession.id,
+            observationId: savedObs.id,
+            outcomeStatus: PaymentStatus.PROCESSING,
+            verificationLevel: verifyResult.level,
+            verificationTag: verifyResult.tag,
+            verificationSources: verifyResult.sources
           };
         }
 

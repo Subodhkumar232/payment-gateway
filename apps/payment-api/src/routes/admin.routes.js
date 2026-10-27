@@ -282,12 +282,16 @@ export function registerAdminRoutes(server, ctx) {
       return;
     }
 
-    if ([PaymentStatus.SUCCESS, PaymentStatus.FAILED, PaymentStatus.EXPIRED, PaymentStatus.CANCELLED].includes(session.status)) {
+    if ([PaymentStatus.SUCCESS, PaymentStatus.RECONCILED, PaymentStatus.FAILED, PaymentStatus.EXPIRED, PaymentStatus.CANCELLED].includes(session.status)) {
       HttpServer.json(res, 409, { error: `Cannot confirm a payment in terminal status '${session.status}'.` });
       return;
     }
 
-    const updated = ctx.sessionRepo.transitionToTerminal(paymentId, PaymentStatus.SUCCESS);
+    const targetStatus = (session.status === PaymentStatus.OBSERVED_SUCCESS || session.status === PaymentStatus.MANUAL_REVIEW)
+      ? PaymentStatus.RECONCILED
+      : PaymentStatus.SUCCESS;
+
+    const updated = ctx.sessionRepo.transitionToTerminal(paymentId, targetStatus);
 
     if (ctx.auditRepo) {
       ctx.auditRepo.log({
@@ -302,7 +306,7 @@ export function registerAdminRoutes(server, ctx) {
     }
 
     server.broadcastSse(paymentId, 'status_change', {
-      status: PaymentStatus.SUCCESS,
+      status: targetStatus,
       method: session.method,
       orderId: session.orderId
     });
@@ -320,7 +324,7 @@ export function registerAdminRoutes(server, ctx) {
       success: true,
       confirmed: true,
       paymentId,
-      status: PaymentStatus.SUCCESS,
+      status: targetStatus,
       reconciledBy: operatorId
     });
   });

@@ -183,6 +183,15 @@ describe('Gmail Poller Boot Lifecycle & Control Suite', () => {
     });
 
     test('Persists message IDs across restarts and rejects duplicates', async () => {
+      // Seed an active session for 150.00 so fail-closed intake accepts observation
+      const session1 = apiInstance.app.context.sessionRepo.create({
+        merchantId: '00000000-0000-0000-0000-000000000001',
+        receivingAccountId: '00000000-0000-0000-0000-000000000002',
+        orderId: 'BOOT-TEST-ORD-1',
+        amountPaise: 15000n
+      });
+      apiInstance.app.context.queueEngine.enqueueOrActivate(session1.id, '00000000-0000-0000-0000-000000000002');
+
       // 1. Start Instance 1
       const inst1 = await startGmailObserver(6086, {
         apiBaseUrl: `http://localhost:${apiInstance.port}`,
@@ -198,12 +207,13 @@ describe('Gmail Poller Boot Lifecycle & Control Suite', () => {
         body: 'Dear customer, Rs 150.00 credited to your account. UTR: 778899001122'
       };
 
-      const res1 = await inst1.poller.processEmail(emailPayload);
-      assert.equal(res1.accepted, true);
-      assert.ok(inst1.poller.processedMessageIds.has('msg_boot_lifecycle_101'));
-
-      // Close instance 1
-      await inst1.close();
+      try {
+        const res1 = await inst1.poller.processEmail(emailPayload);
+        assert.equal(res1.accepted, true);
+        assert.ok(inst1.poller.processedMessageIds.has('msg_boot_lifecycle_101'));
+      } finally {
+        await inst1.close();
+      }
 
       // Verify file written to disk
       assert.ok(fs.existsSync(tempStorage));
@@ -248,6 +258,7 @@ describe('Gmail Poller Boot Lifecycle & Control Suite', () => {
           orderId: 'ISOLATION-TEST-ORD-1',
           amountPaise: 30000n // ₹300.00
         });
+        apiInstance.app.context.queueEngine.enqueueOrActivate(session.id, '00000000-0000-0000-0000-000000000002');
 
         // Submit matching bank observation via observer
         const obsResult = await observer.poller.processEmail({

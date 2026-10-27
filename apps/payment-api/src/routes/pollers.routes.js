@@ -238,6 +238,7 @@ export function registerPollerRoutes(server, ctx) {
     if (pipeResult.status === 'VERIFIED') {
       HttpServer.json(res, 200, {
         accepted: true,
+        ...(body.clientMessageId ? { clientMessageId: body.clientMessageId } : {}),
         observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
         attribution: pipeResult.stages?.stage6?.details || pipeResult,
         pipeline: pipeResult
@@ -537,6 +538,7 @@ export function registerPollerRoutes(server, ctx) {
       ctx.db.execute("UPDATE android_devices SET last_observation_at = datetime('now') WHERE id = ?", [deviceId]);
       HttpServer.json(res, 200, {
         accepted: true,
+        ...(body.clientMessageId ? { clientMessageId: body.clientMessageId } : {}),
         observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
         attribution: pipeResult.stages?.stage6?.details || pipeResult,
         pipeline: pipeResult

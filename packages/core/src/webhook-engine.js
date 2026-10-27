@@ -209,6 +209,9 @@ export class WebhookEngine {
       ]);
     }
 
+    // Outbox cleanup commits together with durable delivery preparation.
+    this.db.execute('DELETE FROM payment_webhook_outbox WHERE payment_id = ?', [session.id]);
+
     const signature = generateHmac(payloadString, merchant.webhookSecret);
     const timestampedSignature = generateHmac(`${timestamp}.${payloadString}`, merchant.webhookSecret);
 
@@ -220,30 +223,6 @@ export class WebhookEngine {
       'X-Gateway-Delivery-Id': deliveryId,
       'X-Gateway-Timestamp': timestamp
     };
-
-    // Persist BEFORE network IO. A worker dying during fetch must leave an eligible
-    // retry with its original deliveryId, timestamp and exact payload bytes.
-    // The 60s lease avoids two senders racing while an attempt is in flight.
-    const recoveryAt = new Date(Date.now() + 60000).toISOString();
-    const existing = this.db.transaction(() => {
-      const row = this.db.queryOne(
-        'SELECT id, is_successful, response_status, response_body FROM webhook_deliveries WHERE payment_id = ? AND event_type = ? ORDER BY created_at DESC LIMIT 1',
-        [session.id, publicOutcome]
-      );
-      if (row) return row;
-      this.db.execute(`
-        INSERT INTO webhook_deliveries (
-          id, merchant_id, payment_id, event_type, payload, endpoint_url,
-          response_status, response_body, attempt_count, is_successful, next_retry_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 1, 0, ?, ?)
-      `, [deliveryId, merchant.id, session.id, publicOutcome, payloadString, merchant.webhookUrl, recoveryAt, nowIso]);
-      // Outbox cleanup commits together with durable delivery preparation.
-      this.db.execute('DELETE FROM payment_webhook_outbox WHERE payment_id = ?', [session.id]);
-      return null;
-    });
-    if (existing) {
-      return { delivered: Boolean(existing.is_successful), deliveryId: existing.id, status: existing.response_status, error: existing.is_successful ? undefined : existing.response_body };
-    }
 
     let responseStatus = null;
     let responseBody = null;
@@ -365,7 +344,7 @@ export class WebhookEngine {
       const endpointCheck = validateOutboundWebhookUrl(merchant.webhookUrl);
       if (!endpointCheck.valid) continue;
 
-      const publicOutcome = isTerminalStatus(sessionRow.status)
+      const publicOutcome = isDispatchableOutcome(sessionRow.status)
         ? toPublicOutcome(sessionRow.status)
         : sessionRow.status;
       const deliveryId = crypto.randomUUID();
@@ -406,36 +385,37 @@ export class WebhookEngine {
 
     const nowIso = new Date().toISOString();
 
-    // Invariant: Atomically claim overdue pending deliveries in a transaction to prevent duplicate dispatches
-    const claimed = this.db.transaction(() => {
-      const pending = this.db.query(`
-        SELECT id, merchant_id, payment_id, event_type, payload, endpoint_url, attempt_count
-        FROM webhook_deliveries
-        WHERE is_successful = 0 AND attempt_count < ? AND next_retry_at <= ?
-        LIMIT 20
-      `, [this.maxRetries, nowIso]);
-
-      if (pending.length === 0) return [];
-
-      // Lock claimed items by setting next_retry_at 60 seconds into the future
-      const claimLockIso = new Date(Date.now() + 60000).toISOString();
-      for (const item of pending) {
-        this.db.execute(`
-          UPDATE webhook_deliveries
-          SET next_retry_at = ?, attempt_count = attempt_count + 1
-          WHERE id = ?
-        `, [claimLockIso, item.id]);
-      }
-
-      return pending;
-    });
-
-    if (claimed.length === 0) return [];
+    // Snapshot a bounded batch, but claim each delivery only immediately before sending.
+    // Twenty sequential 10s requests can outlive a shared 60s lease, allowing another
+    // sweep to reclaim waiting items and consume attempts without a network request.
+    const candidates = this.db.query(`
+      SELECT id FROM webhook_deliveries
+      WHERE is_successful = 0 AND attempt_count < ? AND next_retry_at <= ?
+      ORDER BY next_retry_at, id
+      LIMIT 20
+    `, [this.maxRetries, nowIso]);
 
     const results = [];
     const backoffs = [5000, 30000, 120000, 600000, 3600000];
 
-    for (const item of claimed) {
+    for (const candidate of candidates) {
+      const item = this.db.transaction(() => {
+        // Another worker may have claimed or completed this item since the snapshot.
+        const pending = this.db.queryOne(`
+          SELECT id, merchant_id, payment_id, event_type, payload, endpoint_url, attempt_count
+          FROM webhook_deliveries
+          WHERE id = ? AND is_successful = 0 AND attempt_count < ? AND next_retry_at <= ?
+        `, [candidate.id, this.maxRetries, new Date().toISOString()]);
+        if (!pending) return null;
+
+        this.db.execute(`
+          UPDATE webhook_deliveries
+          SET next_retry_at = ?, attempt_count = attempt_count + 1
+          WHERE id = ?
+        `, [new Date(Date.now() + 60000).toISOString(), pending.id]);
+        return pending;
+      });
+      if (!item) continue;
       const merchant = this.merchantRepo.findById(item.merchant_id);
       if (!merchant || !merchant.webhookSecret || !item.endpoint_url) {
         this.db.execute(`
