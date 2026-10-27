@@ -184,6 +184,19 @@ export class AdminServer {
         return;
       }
 
+      // Self-hosted admin typeface (keeps the CSP free of third-party font hosts)
+      if (pathname === '/fonts/manrope-latin-wght.woff2') {
+        const fontPath = path.resolve(__dirname, '../public/fonts/manrope-latin-wght.woff2');
+        if (fs.existsSync(fontPath)) {
+          res.writeHead(200, {
+            'Content-Type': 'font/woff2',
+            'Cache-Control': 'public, max-age=31536000, immutable'
+          });
+          fs.createReadStream(fontPath).pipe(res);
+          return;
+        }
+      }
+
       // Download Android Companion APK
       if (pathname === '/youpi-sms-gateway.apk' || pathname === '/api/v1/admin/sms-gateway/download-apk') {
         const apkCandidates = [
