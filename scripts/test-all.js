@@ -11,6 +11,7 @@ const testFiles = [
   'packages/core/src/__tests__/observer-isolation-concurrency.test.js',
   'packages/core/src/__tests__/release-candidate-verification.test.js',
   'packages/core/src/__tests__/queue-timing.test.js',
+  'packages/core/src/__tests__/timing-transition-failure.test.js',
   'packages/core/src/__tests__/webhook-engine.test.js',
   'packages/merchant-sdk/src/__tests__/merchant-sdk.test.js',
   'packages/merchant-sdk/src/__tests__/youpi-universal-integration.test.js',

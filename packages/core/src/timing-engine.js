@@ -110,15 +110,15 @@ export class TimingEngine {
    * @returns {any} Updated session in PROCESSING state
    */
   handlePaymentDone(sessionId) {
-    // 1. Cancel Timer 1
+    // Commit the database transition before cancelling the active timer. A failed
+    // transition leaves the session ACTIVE, so its original expiry must stay armed.
+    const session = this.sessionRepo.transitionToProcessing(sessionId, this.processingDurationMs);
+
     const activeTimer = this.activeTimers.get(sessionId);
     if (activeTimer) {
       clearTimeout(activeTimer);
       this.activeTimers.delete(sessionId);
     }
-
-    // 2. Transition session to PROCESSING in DB
-    const session = this.sessionRepo.transitionToProcessing(sessionId, this.processingDurationMs);
 
     if (this.auditRepo) {
       this.auditRepo.log({
